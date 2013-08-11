@@ -1,0 +1,13 @@
+{
+    "name": "node-sx",
+    "version": "0.0.1",
+    "description": "Node.js bindings for SX",
+    "dependencies": {
+        "underscore": "*",
+        "process": "*"
+    },
+    "main": "main.js",
+    "author": "vbuterin",
+    "keywords": ["bitcoin", "crypto", "finance"],
+    "engines": { "node": "*" }
+}
