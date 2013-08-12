@@ -2,7 +2,7 @@ var sx = require('./main.js'),
 async = require('async'),
 process = require('process'),
 eh = sx.errHandle,
-cbwhile = sx.cbwhile,
+cbuntil = sx.cbuntil;
 _ = require('underscore');
 
 var dl = { listener: function(){} }
@@ -31,38 +31,22 @@ async.waterfall([function(cb) {
     console.log("Press enter once you sent money to the address");
     dl.listener = function(text) {
         var history = [];
-        cbwhile(
-            function(cb2) { return cb2(null, history.length == 0); },
-            function(cb2) {
-                console.log("Waiting for history");
-                sx.history(addrdata.addr,eh(cb2,function(h) {
-                    history.splice(0,history.length);
-                    while (h.length > 0) history.push(h.pop());
-                    cb2(null,true);
-                }));
+        cbuntil(
+            function(cb2) { 
+                console.log("Waiting for payment");
+                sx.get_enough_utxo(addrdata.addr,100000,function(err,success) {
+                    if (err) {
+                        console.log(err); return cb2(null,false);
+                    }
+                    console.log(success); return cb2(null,true);
+                });
             },
-            eh(cb,_.partial(cb,null,addrdata,history))
+            eh(cb,function() { cb(null,addrdata,history); })
         );
 
     };
 }, function(addrdata,history,cb) {
-    console.log('Output found: ',history);
-    sx.mktx([history[0]],{'1VubN5ipWkCpcQ3pn7c74FNhfnzo4vg3D':10000},eh(cb,function(tx) {
-        console.log('tx',tx);
-        sx.rawscript(['dup','hash160','[',addrdata.hash160,']','equalverify','checksig'],eh(cb,function(rawscript) {
-            console.log('rs',rawscript);
-            sx.sign_input(tx,0,rawscript,addrdata.pk,eh(cb,function(sig) {
-                console.log('sig',sig);
-                sx.rawscript(['[',sig,']','[',addrdata.pub,']'],eh(cb,function(rawscript2) {
-                    console.log('rs2',arguments);
-                    sx.set_input(tx,0,rawscript2,eh(cb,function(tx) {
-                        console.log('tx',tx);
-                        sx.broadcast(tx,eh(cb,function(o) {
-                            console.log('o',o);
-                        }));
-                    }));
-                }));
-            }));
-        }));
+    sx.send(addrdata.pk,'1VubN5ipWkCpcQ3pn7c74FNhfnzo4vg3D',100000,addrdata.addr,eh(cb,function(tx) {
+        console.log("Success: ",tx);
     }));
-}],function() { console.log(arguments); });
+}],function(err,res) { console.log(err ? err : res); });

@@ -4,7 +4,9 @@
     "description": "Node.js bindings for SX",
     "dependencies": {
         "underscore": "*",
-        "process": "*"
+        "process": "*",
+        "async": "*",
+        "long-stack-traces": "*"
     },
     "main": "main.js",
     "author": "vbuterin",
