@@ -34,8 +34,11 @@ m.cbuntil = function(f,cb) {
 m.cbmap = function(array,f,cb) {
     var cbs = array.length;
     var out = Array(array.length);
+    var cbcalled = false;
     for (var i = 0; i < array.length; i++) {
-        f(array[i],function(ii) { return eh(cb,function(v) {
+        f(array[i],function(ii) { return eh(function(err) {
+            if (!cbcalled) { cb(err); cbcalled = true; }
+        },function(v) {
             out[ii] = v;
             cbs--;
             if (cbs===0) { return cb(null,out); }
@@ -55,10 +58,19 @@ m.cbmap_seq = function(array,f,cb) {
     inner(0);
 }
 
+m.foldr = function(array,init,f,cb) {
+    var inner = function(o,i) {
+        if (i == array.length) { return cb(null,o); }
+        f(o,array[i],eh(cb,function(out) { inner(out,i+1); }));
+    };
+    inner(init,0);
+}
+
 var cmdcall = function(arg,args,inp,cb) {
     if (!args) args = [];
     var p = spawn("sx",[arg].concat(args));
     if (inp) { 
+        //console.log('inp',inp,'arg',arg);
         p.stdin.write(inp); 
     }
     p.stdin.end();
@@ -94,33 +106,33 @@ m.qrcode = function(data,cb) {
 m.balance = _.partial(cmdcall,'balance',null);
 m.fetch_transaction = _.partial(cmdcall,'fetch-transaction',null);
 m.fetch_last_height = _.partial(cmdcall,'fetch-last-height',null);
-m.history = function(addr,cb) {
-    async.waterfall([
-    _.partial(cmdcall,'history',[addr],null),
-    function(htext,cb2) {
-        cmdcall('fetch-last-height',null,null,eh(cb,function(height) {
-            cb2(null,htext,parseInt(height));
+m.history = function(addrs,cb) {
+    if (typeof addrs === "string") { addrs = [addrs]; }
+    cmdcall('fetch-last-height',null,null,eh(cb,function(height) {                    
+        m.cbmap(addrs,function(addr,cb2) {
+            cmdcall('history',[addr],null,cb2);
+        },eh(cb,function(histories) {
+            var htext = histories.join('\n');
+            var data = [];
+            var cur = {};
+            var lines = htext.split('\n').map(strip);
+            for (var i = 0; i < lines.length; i++) {
+                var fields = lines[i].split(' ').filter(identity);
+                if (fields[0] == "Address:") cur = { address: fields[1] };
+                if (fields[0] == "output:") {
+                    cur.output = fields[1];
+                    if (fields[2] == "Pending") cur.confirmations = 0;
+                    else cur.confirmations = height - parseInt(fields[3]) + 1;
+                }
+                if (fields[0] == "value:") cur.value = parseInt(fields[1]);
+                if (fields[0] == "spend:") {
+                    cur.spend = fields[1] == "Unspent" ? null : fields[1];
+                    data.push(cur);
+                }
+            };
+            cb(null,data);
         }));
-    },function(htext,height,cb2) {
-        var data = [];
-        var cur = {};
-        var lines = htext.split('\n').map(strip);
-        for (var i = 0; i < lines.length; i++) {
-            var fields = lines[i].split(' ').filter(identity);
-            if (fields[0] == "Address:") cur = { address: fields[1] };
-            if (fields[0] == "output:") {
-                cur.output = fields[1];
-                if (fields[2] == "Pending") cur.confirmations = 0;
-                else cur.confirmations = height - parseInt(fields[3]) + 1;
-            }
-            if (fields[0] == "value:") cur.value = parseInt(fields[1]);
-            if (fields[0] == "spend:") {
-                cur.spend = fields[1] == "Unspent" ? null : fields[1];
-                data.push(cur);
-            }
-        };
-        cb2(null,data);
-    }],cb);
+    }));                                                                              
 }
 
 m.scripthash = _.partial(cmdcall,'scripthash',null);
@@ -130,10 +142,8 @@ m.showscript = function(inp,cb) {
 }
 
 var txop = function(arg, args, output_tx, tx, inp, cb) {
-    async.waterfall([function(cb2) {
-        var filename = '/tmp/sxnode-' + (""+Math.random()).substring(2,11);
-        fs.writeFile(filename,tx || "",eh(cb,function() { cb2(null,filename); }));
-    }, function(filename,cb2) {
+    var filename = '/tmp/sxnode-' + (""+Math.random()).substring(2,11);
+    fs.writeFile(filename,tx || "",eh(cb,function() {
         args = [filename].concat(args || []);
         //console.log('fn',filename,'args',args,'a',arguments);
         var p = spawn("sx",[arg].concat(args));
@@ -143,12 +153,14 @@ var txop = function(arg, args, output_tx, tx, inp, cb) {
         p.stdin.end();
         var data = "";
         p.stdout.on('data',function(d) { data += d; });
-        p.stdout.on('close',function() { cb2(null,output_tx ? filename : data) });
+        p.stdout.on('close',function() { 
+            if (output_tx) { 
+                fs.readFile(filename,eh(cb,function(tx) { cb(null,""+tx); }));
+            }
+            else { cb(null,strip(data)); }
+        });
         p.stdout.on('error',cb);
-    },
-    output_tx ? function(filename,cb2) { fs.readFile(filename,cb2); }
-              : function(data,cb2) { cb2(null,strip(data)); }
-    ], eh(cb,function(tx) { cb(null,""+tx) }));
+    }));
 }
 
 m.mktx = function(inputs, outputs, cb) {
@@ -168,8 +180,9 @@ m.showtx = function(tx,cb) {
             var fields = shown.split('\n')
                 .map(function(str) { return str.split(' ').filter(identity); })
     
-            var inputs = []; outputs = [];
+            var inputs = [], outputs = [], hash = "";
             for (var i = 0; i < fields.length;) {
+                if (fields[i][0] == "hash:") { hash = fields[i][1]; }
                 if (fields[i][0] == "Input:") {
                     inputs.push({
                         prev: fields[i+1][2],
@@ -187,7 +200,7 @@ m.showtx = function(tx,cb) {
                 }
                 else i++;
             }
-            cb(null, { inputs: inputs, outputs: outputs });
+            cb(null, { inputs: inputs, outputs: outputs, hash: hash });
         } catch(e) { cb(e); }
     }));
 }
@@ -230,8 +243,7 @@ m.broadcast = m.broadcast_tx = function(tx,cb) {
     }],cb);
 }
 
-m.get_enough_utxo = function(h,amount,cb) {
-    //console.log('ww',address,amount,cb,h);
+m.get_enough_utxo_from_history = function(h,amount,cb) {
     var utxo = h.filter(function(x) { return !x.spend });
     var valuecompare = function(a,b) { return a.value > b.value; }
     var high = utxo.filter(function(o) { return o.value >= amount; }).sort(valuecompare);
@@ -245,8 +257,18 @@ m.get_enough_utxo = function(h,amount,cb) {
     return cb({ err: "Not enough money", value: totalval, needed: amount});
 }
 
-m.make_sending_transaction_from_utxo = function(prevs, to, value, change, cb) {
-    var sum = prevs.map(function(x) { return x.value; })
+// Gets UTXO set paying value _value_ from address set _[from]_
+m.get_utxo = function(from, value, cb) {
+    if (typeof from == "string") from = [from];
+    m.history(from,eh(cb,function(h) {
+        m.get_enough_utxo_from_history(h,value,cb);
+    }));
+}
+
+// Makes a sending transaction paying _value_ from UTXO set _[utxo]_ to address _to_
+// sending change to _[change]_
+m.make_sending_transaction = function(utxo, to, value, change, cb) {
+    var sum = utxo.map(function(x) { return x.value; })
         .reduce(function(a,b) { return a+b; },0);
     var outputs = [{
         addr: to,   
@@ -260,46 +282,44 @@ m.make_sending_transaction_from_utxo = function(prevs, to, value, change, cb) {
             value: Math.floor((sum-value-10000)/change.length) 
         });
     }
-    m.mktx(prevs,outputs,cb);
-}
-
-m.make_sending_transaction = function(from, to, value, change, cb) {
-    if (!change) change = from;
-    m.history(from,eh(cb,function(h) {
-        m.get_enough_utxo(h,value,eh(cb,function(utxo) {
-            m.make_sending_transaction_from_utxo(utxo, to, value, change, cb);
-        }));
-    }));
+    m.mktx(utxo,outputs,cb);
 }
 
 m.txhash = function(tx,cb) {
-    m.showtx(tx,eh(cb,function(shown) {
-        cb(null,shown.split('\n')[0].split(' ')[1]);
-    }));
+    m.showtx(tx,eh(cb,function(shown) { cb(null,shown.hash); }));
 }
 
-var adpusher = function(addrdata,key,cb2) { 
-    return eh(cb2,function(val) {
-    addrdata[key] = val; cb2();
-}); }
-
+// Converts a pk or list of pks to an addrdata object
+// addrdata: { priv: _, pub: _, addr: _, hash160: _, raw: _ }
 m.gen_addr_data = function(pk,cb) {
+    if (_.isArray(pk)) { //Handles arrays of private keys
+        return m.cbmap(pk,m.gen_addr_data,cb);
+    }
+    if (typeof pk == "object") { return cb(null,pk); }
+
     var addrdata = { priv: pk }
+
+    var adpusher = function(key,cb2) { 
+        return eh(cb2,function(val) {
+            addrdata[key] = val; cb2();
+        }); 
+    }
     async.waterfall([
-        function(cb2) { m.pubkey(addrdata.priv,adpusher(addrdata,'pub',cb2)) },
-        function(cb2) { m.addr(addrdata.priv,adpusher(addrdata,'addr',cb2)) },
-        function(cb2) { m.decode_addr(addrdata.addr,adpusher(addrdata,'hash160',cb2)) },
+        function(cb2) { m.pubkey(addrdata.priv,adpusher('pub',cb2)) },
+        function(cb2) { m.addr(addrdata.priv,adpusher('addr',cb2)) },
+        function(cb2) { m.decode_addr(addrdata.addr,adpusher('hash160',cb2)) },
         function(cb2) {
             if (addrdata.addr[0] == '1') {
                 var script = ['dup','hash160','[',addrdata.hash160,']','equalverify','checksig'];
                 addrdata.script = script;
-                m.rawscript(script, adpusher(addrdata,'raw',cb2));
+                m.rawscript(script, adpusher('raw',cb2));
             }
             else cb2();
         },
     ],eh(cb,function() { cb(null,addrdata); }));
 }
 
+// Generates a multisig address and its associated script
 m.gen_multisig_addr_data = function(pubs,k,cb) {
     m.cbmap(pubs,function(addrdata,cb2) {
         if (typeof addrdata == "object") { 
@@ -327,6 +347,7 @@ m.gen_multisig_addr_data = function(pubs,k,cb) {
     }));
 }
 
+// Signs a transaction at index _index_ with the _addrdata_ object or a private key
 m.sign_tx_input = function(tx,index,addrdata,cb) {
     if (typeof addrdata == "string") {
         return m.gen_addr_data(addrdata,eh(cb,function(res) {
@@ -344,85 +365,118 @@ m.sign_tx_input = function(tx,index,addrdata,cb) {
     }));
 }
 
-//Data can also be the script
-m.apply_multisignatures_at_index = function(tx,index,sigobj,data,cb) {
-    if (typeof data == "string") {
-        return m.showscript(data,eh(cb,function(sc) {
-            var n = parseInt(sc[sc.length-2]),
-                k = parseInt(sc[0]);
-            m.apply_multisignatures_at_index(tx,index,sigobj,{ script: data, n: n, k: k },cb);
+//Single-index helper for the below helper
+m.apply_multisignatures_at_index = function(tx,script,index,sigobj,cb) {
+    m.showscript(script,eh(cb,function(sc) {
+        var n = parseInt(sc[sc.length-2]),
+            k = parseInt(sc[0]),
+            sigs = (sigobj || []).filter(function(x) { return x; });
+        if (sigs.length < k) {
+            return cb(null,tx);
+        }
+        var zeroes = [].concat(_.range(sigs.length,n).map(function() { return 'zero' }));
+        var script2 = [].concat.apply(zeroes,sigs.map(function(sig) { return ['[',sig,']']; }))
+            .concat(['[',script,']']);
+        m.rawscript(script2,eh(cb,function(r) {
+            m.set_input(tx,index,r,cb);
         }));
-    }
-    var keys = Object.keys(sigobj).sort(function(a,b) { return a > b; });
-    var sigs = [];
-    for (var i = 0; i < keys.length; i++) {
-        sigs.push(sigobj[keys[i]]);
-    }
-    var zeroes = [].concat(_.range(data.k,data.n).map(function() { return 'zero' }));
-    var script = [].concat.apply(zeroes,sigs.map(function(sig) { return ['[',sig,']']; }))
-        .concat(['[',data.script,']']);
-    m.rawscript(script,eh(cb,function(r) {
-        m.set_input(tx,index,r,eh(cb,function(ss) { cb(null,ss)}));
     }));
     
 }
 
-//Data can also be the script
-m.apply_multisignatures = function(tx,sigs,data,cb) {
+//Helper method for applying multisignatures to a transaction
+m.apply_multisignatures = function(tx,script,sigs,cb) {
     m.showtx(tx,eh(cb,function(shown) {
-        var o = { tx: tx }
-        m.cbmap_seq(_.range(shown.inputs.length),function(i,cb2) {
-            var isigs = {};
-            for (var ind in sigs) { isigs[ind] = sigs[ind][i]; }
-            m.apply_multisignatures_at_index(o.tx,i,isigs,data,eh(cb,function(tx) {
-                o.tx = tx;   
-                cb2();
-            }));
-        },eh(cb,function() { cb(null, o.tx); }));
+        m.foldr(_.range(shown.inputs.length),tx,function(tx,i,cb2) {
+            m.apply_multisignatures_at_index(tx,script,i,sigs[i],cb2);
+        },cb);
     }));
 }
 
 m.multisig_sign_tx_input = m.sign_input;
 
-m.multisig_sign_tx_inputs = function(tx,script,pk,cb) {
-    m.showtx(tx,eh(cb,function(shown) {
-        m.cbmap(_.range(shown.inputs.length),function(i,cb3) {
-            m.multisig_sign_tx_input(tx,i,script,pk,cb3);
-        },eh(cb,function(sigs) {
-            m.showscript(script,eh(cb,function(shown2) {
-                m.pubkey(pk,eh(cb,function(pub) {
-                    var i = shown2.filter(function(x) { 
+// Creates a transaction object txobj: { tx: _, sigs: [_] }
+// Signs all multisig inputs conforming to the script with private key _pk_
+// And applies signatures to the transaction automatically
+m.multisig_sign_tx_inputs = function(txobj,script,pk,utxo,cb) {
+    if (typeof txobj == "string") {
+        txobj = { tx: txobj, sigs: [] }
+    }
+    else { //Function returns new object, does not mutate
+        txobj = { tx: txobj.tx, sigs: txobj.sigs.slice(0) }
+    }
+    async.series({
+        msigaddr: _.partial(m.scripthash,script),
+        showscript: _.partial(m.showscript,script),
+        showtx: _.partial(m.showtx,txobj.tx),
+        pubkey: _.partial(m.pubkey,pk)
+    },eh(cb,function(r) {
+        var utxomap = {}, showtx = r.showtx, msigaddr = r.msigaddr,
+            showscript = r.showscript, pubkey = r.pubkey;
+        utxo.map(function(u) { utxomap[u.output] = u; });
+        m.cbmap(_.range(showtx.inputs.length),function(i,cb3) {
+            // Look for indices with the address we're trying to sign
+            console.log('u',utxomap[showtx.inputs[i].prev].address,msigaddr);
+            if (utxomap[showtx.inputs[i].prev].address == msigaddr) {
+                m.multisig_sign_tx_input(txobj.tx,i,script,pk,eh(cb,function(sig) {
+                    txobj.sigs[i] = txobj.sigs[i] || [];
+                    var j = showscript.filter(function(x) { 
                         return x.length == 66 || x.length == 130; 
-                    }).indexOf(pub);
-                    var o = {};
-                    o[i] = sigs;
-                    return cb(null,o);
+                    }).indexOf(pubkey);
+                    //console.log('aa',txobj,i,script,pk,sig,j);
+                    if (j == -1) { 
+                        return cb3("Privkey does not match multisig script!"); 
+                    }
+                    txobj.sigs[i][j] = sig;
+                    m.apply_multisignatures(txobj.tx,script,txobj.sigs,eh(cb,function(newtx) {
+                        txobj.tx = newtx;
+                        cb3(null,sig);
+                    }));
                 }));
-            }));
+            }
+            else cb3(null,null);
+        },eh(cb,function() { return cb(null,txobj); }));
+    }));
+}
+
+// Sign all singlesig inputs signable with _[privs]_, using _[utxo]_ to get data of which
+// priv applies where
+m.sign_tx_inputs = function(tx, privs, utxo, cb) {
+    if (typeof privs === "string") { privs = [privs]; }
+    m.gen_addr_data(privs,eh(cb,function(addrdata) {
+        m.showtx(tx,eh(cb,function(shown) {
+            var utxomap = {};
+            utxo.map(function(u) { utxomap[u.output] = u; });
+            m.foldr(_.range(shown.inputs.length),tx,function(tx,i,cb2) {
+                var good_addrdata = addrdata.filter(function(x) {
+                    return x.addr == utxomap[shown.inputs[i].prev].address;
+                });
+                if (good_addrdata.length === 0) { return cb2(null,tx); }
+                else m.sign_tx_input(tx,i,good_addrdata[0],cb2);
+            },cb);
         }));
     }));
 }
 
-m.send = function(pk, to, value, change, cb) {
+// Send _value_ money from the wallet of _[pks]_ to _to_, sending change to _[change]_
+m.send = function(pks, to, value, change, cb) {
+    if (typeof pks === "string") {
+        pks = [pks];
+    }
     async.waterfall( [
-        function(cb2) { m.gen_addr_data(pk,cb2); },
+        function(cb2) { m.gen_addr_data(pks,cb2); },
         function(addrdata,cb2) { 
-            m.make_sending_transaction(addrdata.addr, to, value, change, eh(cb,function(tx) {
-                cb2(null,addrdata,utxo,tx);
+            var addrs = addrdata.map(function(x) { return x.addr; });
+            m.get_utxo(addrs, value, eh(cb,function(utxo) {
+                m.make_sending_transaction(utxo, to, value, change, eh(cb,function(tx) {
+                    cb2(null,tx,addrdata,utxo)
+                }));
             }));
         },
-        function(addrdata,utxo,tx,cb2) {
-            addrdata.tx = tx;
-            m.cbmap_seq(_.range(utxo.length),function(i,cb3) {
-                m.sign_tx_input(addrdata.tx,i,addrdata,eh(cb,function(tx) {
-                    addrdata.tx = tx;
-                    cb3();
-                }));
-            },eh(cb,function() { 
-                m.broadcast(addrdata.tx);
-                m.txhash(addrdata.tx,eh(cb,function(hash) {
-                    cb2(null,{ tx: addrdata.tx, hash: hash });
-                }));
+        m.sign_tx_inputs,
+        function(tx,cb2) {
+            m.txhash(tx,eh(cb,function(hash) {
+                m.broadcast(tx,function() { cb(null, {tx: tx, hash: hash}); });
             }));
     }],cb);
 }

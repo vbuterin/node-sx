@@ -16,55 +16,69 @@ function pod(cb) {
     process.stdin.on('data',redirector(dls.length-1));
 }
 
-async.waterfall([function(cb) {
-    var seed = 'a45ab3566367728909a778482e328b0d';
-    sx.cbuntil(function(cb2) {
-        console.log("REPL");
-        pod(function(text) {
-            var fields = (text+"").split(' ');
-            if (fields[0] == "addr") {
-                sx.genpriv(seed,parseInt(fields[1]),0,eh(cb,function(pk) {   
-                    sx.gen_addr_data(pk,eh(cb,function(data) {
-                        console.log(data);
-                        return cb2(null,false);
-                    }));
-                }));
-            }
-            else if (fields[0] == "msigaddr") {
-                sx.gen_multisig_addr_data(fields.slice(1,4),2,eh(cb,function(data) {
-                    console.log(data);
-                    return cb2(null,false);
-                }));
-            }
-            else if (fields[0] == "mkmultitx") {
-                sx.make_sending_transaction(fields[1],fields[2],parseInt(fields[3]),null,eh(cb,function(tx) {
-                    console.log("Transaction: ",tx);
-                    return cb2(null,false);
-                }));
-            }
-            else if (fields[0] == "sign") {
-                sx.multisig_sign_tx_inputs(fields[1],fields[2],fields[3],eh(cb,function(sigs) {
-                    console.log(JSON.stringify(sigs));
-                    return cb2(null,false);
-                }));
-            }
-            else if (fields[0] == "apply") {
-                var sigs = JSON.parse(fields.slice(3).join(' ').replace("'",'"'));
-                sx.apply_multisignatures(fields[1],sigs,fields[2],eh(cb,function(tx) {
-                    console.log(tx);
-                    return cb2(null,false);
-                }));
-            }
-            else if (fields[0] == "broadcast") {
-                sx.broadcast(fields[1],eh(cb,function(data) {
-                    return cb2(null,false);
-                }));
-            }
-            else if (fields[0] == "exit") { return cb2(null,true); }
-            else { console.log("Error, bad command"); return cb2(null,false); }
-        });
-    });
-}]);
+var seed = 'a45ab3566367728909a778482e328b0d';
+console.log("REPL");
+
+var cb2 = function(text) { console.log("Error: ",text); }
+
+pod(function(text) {
+    var fields = (text+"").split(' ');
+    if (fields[0] == "addr") {
+        sx.genpriv(seed,parseInt(fields[1]),0,eh(cb2,function(pk) {   
+            sx.gen_addr_data(pk,eh(cb2,function(data) {
+                console.log(data);
+            }));
+        }));
+    }
+    else if (fields[0] == "msigaddr") {
+        sx.gen_multisig_addr_data(fields.slice(1,4),2,eh(cb2,function(data) {
+            console.log(data);
+        }));
+    }
+    else if (fields[0] == "mkmultitx") {
+        var addies = fields.slice(1,fields.length-2);
+        var to = fields[fields.length-2];
+        var value = parseInt(fields[fields.length-1]);
+        console.log(addies,value);
+        sx.get_utxo(addies,value,eh(cb2,function(utxo) {
+            sx.make_sending_transaction(utxo,to,value,addies[0],eh(cb2,function(tx) {
+                console.log("Transaction: ",tx);
+                console.log("UTXO: ",JSON.stringify(utxo));
+            }));
+        }));
+    }
+    else if (fields[0] == "msign") {
+        sx.multisig_sign_tx_inputs(fields[1],fields[2],fields[3],JSON.parse(fields.slice(4).join(' ')),eh(cb2,function(sigs) {
+            console.log(JSON.stringify(sigs));
+        }));
+    }
+    else if (fields[0] == "sign") {
+        sx.sign_tx_inputs(fields[1],fields[2],JSON.parse(fields.slice(3).join(' ')),eh(cb2,function(out) {
+            console.log(out);
+        }));
+    }
+    else if (fields[0] == "apply") {
+        var sigs = JSON.parse(fields.slice(3).join(' ').replace("'",'"'));
+        sx.apply_multisignatures(fields[1],fields[2],sigs,eh(cb2,function(tx) {
+            console.log(tx);
+        }));
+    }
+    else if (fields[0] == "send") {
+        var pks = fields.slice(1,fields.length-2),
+            to = fields[fields.length-2],
+            val = parseInt(fields[fields.length-1]);
+        sx.addr(pks[0],eh(cb2,function(addr) {
+            sx.send(pks,to,val,addr,eh(cb2,function(o) {
+                console.log(o);
+            }));
+        }));
+    }
+    else if (fields[0] == "broadcast") {
+        sx.broadcast(fields[1],eh(cb2,function(data) {
+        }));
+    }
+    else { console.log("Error, bad command"); }
+});
 
 /*async.waterfall([function(cb) {
     seed = 'a45ab3566367728909a778482e328b0d'
