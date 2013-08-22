@@ -16,12 +16,44 @@ function pod(cb) {
     process.stdin.on('data',redirector(dls.length-1));
 }
 
-var seed = 'a45ab3566367728909a778482e328b0d';
+//var seed = 'a45ab3566367728909a778482e328b0d';
+var seed = '33334444333344443333444433335555';
 console.log("REPL");
 
 var cb2 = function(text) { console.log("Error: ",text); }
 
-pod(function(text) {
+console.leg = console.log;
+console.log = _.bind(console.leg,console);
+
+sx.load_electrum_wallet(seed,null,eh(cb2,function(wallet) {
+    wallet.update = function() {
+        console.log("recv: ",wallet.recv.length,"==",wallet.n,"change: ",wallet.change.length);
+    }
+    console.log(wallet);
+    pod(function(text) {
+        var fields = (text+"").replace('\n','').split(' ');
+        if (fields[0] == "addr") {
+            wallet.getaddress(eh(cb2,console.log));
+        }
+        if (fields[0] == "balance") {
+            wallet.getbalance(fields[1],eh(cb2,console.log));
+        }
+        if (fields[0] == "send") {
+            wallet.send(fields[1],parseInt(fields[2]),eh(cb2,console.log));
+        }
+        if (fields[0] == "listaddr") {
+            wallet.listaddresses(eh(cb2,console.log));
+        }
+        if (fields[0] == "utxo") {
+            console.log(wallet.utxo);
+        }
+        if (fields[0] == "stxo") {
+            console.log(wallet.stxo);
+        }
+    });
+}));
+
+/*pod(function(text) {
     var fields = (text+"").split(' ');
     if (fields[0] == "addr") {
         sx.genpriv(seed,parseInt(fields[1]),0,eh(cb2,function(pk) {   
@@ -78,7 +110,7 @@ pod(function(text) {
         }));
     }
     else { console.log("Error, bad command"); }
-});
+});*/
 
 /*async.waterfall([function(cb) {
     seed = 'a45ab3566367728909a778482e328b0d'

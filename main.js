@@ -225,6 +225,8 @@ m.sign_input = function(tx,index,script,key,cb) { txop("sign-input",[index,scrip
 
 m.set_input = function(tx,index,inp,cb) { txop("set-input",[index],false,tx,inp,cb); }
 
+m.validtx = function(tx,cb) { txop("validtx",[],false,tx,null,cb); }
+
 m.broadcast = m.broadcast_tx = function(tx,cb) {
     async.waterfall([function(cb2) {
         var filename = '/tmp/sxnode-' + (""+Math.random()).substring(2,11);
@@ -274,12 +276,19 @@ m.make_sending_transaction = function(utxo, to, value, change, cb) {
         addr: to,   
         value: value
     }]
+    if (value < 5430) { return cb("Amount below dust threshold!"); }
+    if (sum < value) { return cb("Not enough money!"); }
+    if (sum-value < 10000) { return cb("Not enough to pay 0.0001 BTC fee!"); }
+
+    // Split change in half by default so that the wallet has multiple UTXO at all times
     if (typeof change == "string") change = [change, change];
-    for (var i = 0; i < change.length; i++) {
-        if (sum-value <= 10000) break;
+
+    var changelen = Math.min(change.length,Math.floor((sum-value-10000) / 5430));
+
+    for (var i = 0; i < changelen; i++) {
         outputs.push({ 
             addr: change[i],
-            value: Math.floor((sum-value-10000)/change.length) 
+            value: Math.floor((sum-value-10000)/changelen) 
         });
     }
     m.mktx(utxo,outputs,cb);
@@ -336,7 +345,9 @@ m.gen_multisig_addr_data = function(pubs,k,cb) {
             console.log("Address given. Attempting to find pubkey in blockchain");
             m.addr_to_pubkey(addrdata,cb2);
         }
-    },eh(cb,function(results) {
+    },eh(cb,function(unsorted_results) {
+        // By convention, sort by pubkey
+        var results = unsorted_results.sort(function(a,b) { return a>b });
         var script = Array.prototype.concat.apply([k],results.map(function(pub) { return ['[',pub,']']; }))
             .concat([results.length,'checkmultisig']);
         m.rawscript(script,eh(cb,function(raw) {
@@ -479,6 +490,150 @@ m.send = function(pks, to, value, change, cb) {
                 m.broadcast(tx,function() { cb(null, {tx: tx, hash: hash}); });
             }));
     }],cb);
+}
+
+m.load_electrum_wallet = function(wallet,cb,cbdone) {
+    if (typeof wallet === "string") { wallet = { seed: wallet } }
+    wallet.recv = wallet.recv || [];
+    wallet.change = wallet.change || [];
+    wallet.utxo = wallet.utxo || [];
+    wallet.stxo = wallet.stxo || [];
+    wallet.n = wallet.n || 5;
+    wallet.update = wallet.update || function(){};
+    wallet.last_recv_load = 0;
+    wallet.last_change_load = 0;
+    wallet.ready = false;
+    cb = cb || function(){};
+    cbdone = cbdone || function(){};
+
+    var txouniq = function(arr) { return _.uniq(arr,false,function(x) { return x.output; }); }
+
+    console.log("Loading change addresses...");
+
+    async.series([function(cb2) {
+        m.cbuntil(function(cb2) {
+            m.genpriv(wallet.seed,wallet.change.length,1,eh(cb,function(key) {
+                m.gen_addr_data(key,eh(cb,function(data) {
+                    wallet.change.push(data);
+                    m.history(data.addr,eh(cb,function(h) {
+                        if (h.length > 0) {
+                            var utxo = h.filter(function(x) { return !x.spend });
+                            var stxo = h.filter(function(x) { return x.spend });
+                            wallet.utxo = txouniq(wallet.utxo.concat(utxo));
+                            wallet.stxo = txouniq(wallet.stxo.concat(stxo));
+                            return cb2(null,false);
+                        }
+                        return cb2(null,true);
+                    }));
+                }));
+            }));
+        },cb2);
+    },function(cb2) {
+        console.log("Loaded " + wallet.change.length + " change addresses");
+        console.log("Loading receiving addresses");
+        var old_recv_length = wallet.recv.length;
+        m.cbmap(_.range(wallet.recv.length,wallet.n),function(i,cb3) {
+            m.genpriv(wallet.seed,i,0,eh(cb3,function(pk) {
+                m.gen_addr_data(pk,cb3);
+            }));
+        },eh(cb2,function(data) {
+            console.log("Have " + wallet.n + " receiving addresses (" + (wallet.n-old_recv_length) + " new)");
+            console.log("Loading history");
+            m.history(data.map(function(x) { return x.addr; }),eh(cb2,function(h) {
+                var utxo = h.filter(function(x) { return !x.spend });
+                wallet.utxo = txouniq(wallet.utxo.concat(utxo));
+                wallet.recv = wallet.recv.concat(data);
+                cb2(null,true);
+            }));
+        }));
+    },function(cb2) {
+        console.log("Wallet ready");
+        setInterval(_.partial(wallet.reload,function(){}),15000);
+        wallet.ready = true;
+        cbdone(null,wallet);
+    }]);
+    
+    wallet.getaddress = function(change,cb2) {
+        if (typeof change == "function") {
+            cb2 = change; change = false;
+        }
+        m.genpriv(wallet.seed,wallet.recv.length,change ? 1 : 0,eh(cb2,function(priv) {
+            m.gen_addr_data(priv,eh(cb2,function(data) {
+                if (!change) {
+                    wallet.n++;
+                    wallet.recv.push(data);
+                    wallet.update();
+                }
+                else { wallet.change.push(data); }
+                cb2(null,data);
+            }));
+        }));
+    }
+
+    wallet.listaddresses = function(cb2) {
+        cb2(null,{
+            recv: wallet.recv.map(function(x) { return x.addr; }),
+            change: wallet.change.map(function(x) { return x.addr; })
+        });
+    }
+
+    wallet.getmultiaddress = function(other,k,cb2) {
+        m.genpriv(wallet.seed,wallet.recv.length,0,eh(cb2,function(priv) {
+            m.genpub(priv,eh(cb2,function(pub) {
+                m.gen_multisig_addr_data([pub].concat(other),k,eh(cb2,function(data) {
+                    wallet.n++;
+                    wallet.recv.push(data);
+                    cb2(null,data);
+                }));
+            }));
+        }));
+    }
+
+    wallet.reload = function(cb2) {
+        var recv = wallet.recv.map(function(x) { return x.addr; });
+        var change = wallet.change.map(function(x) { return x.addr; });
+
+        m.history(recv.concat(change),eh(cb2,function(h) {
+            var stxids = wallet.stxo.map(function(x) { return x.output; });
+            wallet.utxo = h.filter(function(x) { return !x.spend; })
+                    .filter(function(x) { return stxids.indexOf(x.output) == -1 });
+            wallet.stxo = txouniq(wallet.stxo.concat(h.filter(function(x) { return x.spend; })));
+            wallet.update();
+            cb2(null,wallet);
+        }));
+    }
+
+    wallet.getbalance = function(address,cb2) {
+        if (typeof address == "function") {
+            cb2 = address; address = null;
+        }
+        var sum = wallet.utxo.filter(function(x) { return x.addr == address || !address })
+                .reduce(function(sum,txo) { return sum + txo.value; },0);
+        cb2(null,sum);
+    }
+
+    wallet.send = function(to, value, cb2) {
+        m.get_enough_utxo_from_history(wallet.utxo,value+10000,eh(cb2,function(utxo) {
+            var lastaddr = wallet.change[wallet.change.length-1].addr;
+            m.make_sending_transaction(utxo,to,value,lastaddr,eh(cb2,function(tx) {
+                m.sign_tx_inputs(tx,wallet.recv.concat(wallet.change),wallet.utxo,eh(cb2,function(stx) {
+                    var usedtxids = utxo.map(function(x) { return x.output });
+                    wallet.utxo = _.filter(wallet.utxo,function(x) { return usedtxids.indexOf(x.output) == -1; });
+                    wallet.reload(function(){});
+                    console.log('broadcasting: ',stx);
+                    m.validtx(stx,eh(cb2,function(v) {
+                        console.log(v);
+                        m.broadcast(stx,eh(cb2,function() {}));
+                        wallet.getaddress(true,eh(cb2,function(data) {
+                            cb2(null,stx);
+                        }));
+                    }));
+                }));
+            }));
+        }));
+    }
+
+    cb(null,wallet);
 }
 
 module.exports = m;
