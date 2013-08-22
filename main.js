@@ -1,11 +1,19 @@
+var Db = require('mongodb').Db;
+var Connection = require('mongodb').Connection;
+var Server = require('mongodb').Server;
+var BSON = require('mongodb').BSON;
+var ObjectID = require('mongodb').ObjectID;
 var cp = require('child_process'),
+    express = require('express'),
     exec = cp.exec,
     spawn = cp.spawn,
     _ = require('underscore'),
     fs = require('fs'),
     async = require('async');
+    crypto = require('crypto'),
+    sha256 = function(x) { return crypto.createHash('sha256').update(x).digest('hex') };
 
-require('long-stack-traces');
+//require('long-stack-traces');
 
 var m = {};
 
@@ -35,6 +43,7 @@ m.cbmap = function(array,f,cb) {
     var cbs = array.length;
     var out = Array(array.length);
     var cbcalled = false;
+    if (array.length === 0) { return cb(null,[]); }
     for (var i = 0; i < array.length; i++) {
         f(array[i],function(ii) { return eh(function(err) {
             if (!cbcalled) { cb(err); cbcalled = true; }
@@ -503,24 +512,41 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
     wallet.last_recv_load = 0;
     wallet.last_change_load = 0;
     wallet.ready = false;
+
     cb = cb || function(){};
     cbdone = cbdone || function(){};
 
     var txouniq = function(arr) { return _.uniq(arr,false,function(x) { return x.output; }); }
+    var reload_interval;
+
+    wallet.refresh = function() {
+        wallet.lastAccessed = new Date().getTime();
+        if (!reload_interval) {
+            reload_interval = setInterval(_.partial(wallet.reload,function(){}),15000);
+        }
+    }
+    console.log("Seed:",wallet.seed);
 
     console.log("Loading change addresses...");
+
+    var update_txoset = function(h) {
+        var utxo = h.filter(function(x) { return !x.spend });
+        var stxo = h.filter(function(x) { return x.spend });
+        wallet.stxo = txouniq(wallet.stxo.concat(stxo));
+        var stxids = wallet.stxo.map(function(x) { return x.output; });
+        wallet.utxo = txouniq(wallet.utxo.concat(utxo))
+            .filter(function(x) { return stxids.indexOf(x.output) == -1 });
+    }
 
     async.series([function(cb2) {
         m.cbuntil(function(cb2) {
             m.genpriv(wallet.seed,wallet.change.length,1,eh(cb,function(key) {
+                console.log(key);
                 m.gen_addr_data(key,eh(cb,function(data) {
                     wallet.change.push(data);
                     m.history(data.addr,eh(cb,function(h) {
                         if (h.length > 0) {
-                            var utxo = h.filter(function(x) { return !x.spend });
-                            var stxo = h.filter(function(x) { return x.spend });
-                            wallet.utxo = txouniq(wallet.utxo.concat(utxo));
-                            wallet.stxo = txouniq(wallet.stxo.concat(stxo));
+                            update_txoset(h);
                             return cb2(null,false);
                         }
                         return cb2(null,true);
@@ -538,22 +564,25 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
             }));
         },eh(cb2,function(data) {
             console.log("Have " + wallet.n + " receiving addresses (" + (wallet.n-old_recv_length) + " new)");
+            wallet.recv = wallet.recv.concat(data);
             console.log("Loading history");
-            m.history(data.map(function(x) { return x.addr; }),eh(cb2,function(h) {
+            m.history(wallet.recv.map(function(x) { return x.addr; }),eh(cb2,function(h) {
                 var utxo = h.filter(function(x) { return !x.spend });
                 wallet.utxo = txouniq(wallet.utxo.concat(utxo));
-                wallet.recv = wallet.recv.concat(data);
                 cb2(null,true);
             }));
         }));
     },function(cb2) {
         console.log("Wallet ready");
-        setInterval(_.partial(wallet.reload,function(){}),15000);
+        wallet.refresh();
         wallet.ready = true;
         cbdone(null,wallet);
     }]);
+
+
     
     wallet.getaddress = function(change,cb2) {
+        wallet.refresh();
         if (typeof change == "function") {
             cb2 = change; change = false;
         }
@@ -571,6 +600,7 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
     }
 
     wallet.listaddresses = function(cb2) {
+        wallet.refresh();
         cb2(null,{
             recv: wallet.recv.map(function(x) { return x.addr; }),
             change: wallet.change.map(function(x) { return x.addr; })
@@ -578,6 +608,7 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
     }
 
     wallet.getmultiaddress = function(other,k,cb2) {
+        wallet.refresh();
         m.genpriv(wallet.seed,wallet.recv.length,0,eh(cb2,function(priv) {
             m.genpub(priv,eh(cb2,function(pub) {
                 m.gen_multisig_addr_data([pub].concat(other),k,eh(cb2,function(data) {
@@ -593,17 +624,19 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
         var recv = wallet.recv.map(function(x) { return x.addr; });
         var change = wallet.change.map(function(x) { return x.addr; });
 
+        if (new Date().getTime() - wallet.lastAccessed > 600) {
+            clearInterval(reload_interval);
+            reload_interval = null;
+        }
+
         m.history(recv.concat(change),eh(cb2,function(h) {
-            var stxids = wallet.stxo.map(function(x) { return x.output; });
-            wallet.utxo = h.filter(function(x) { return !x.spend; })
-                    .filter(function(x) { return stxids.indexOf(x.output) == -1 });
-            wallet.stxo = txouniq(wallet.stxo.concat(h.filter(function(x) { return x.spend; })));
-            wallet.update();
+            update_txoset(h);
             cb2(null,wallet);
         }));
     }
 
     wallet.getbalance = function(address,cb2) {
+        wallet.refresh();
         if (typeof address == "function") {
             cb2 = address; address = null;
         }
@@ -613,13 +646,14 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
     }
 
     wallet.send = function(to, value, cb2) {
+        wallet.refresh();
         m.get_enough_utxo_from_history(wallet.utxo,value+10000,eh(cb2,function(utxo) {
             var lastaddr = wallet.change[wallet.change.length-1].addr;
             m.make_sending_transaction(utxo,to,value,lastaddr,eh(cb2,function(tx) {
                 m.sign_tx_inputs(tx,wallet.recv.concat(wallet.change),wallet.utxo,eh(cb2,function(stx) {
                     var usedtxids = utxo.map(function(x) { return x.output });
                     wallet.utxo = _.filter(wallet.utxo,function(x) { return usedtxids.indexOf(x.output) == -1; });
-                    wallet.reload(function(){});
+                    wallet.reload(wallet.update);
                     console.log('broadcasting: ',stx);
                     m.validtx(stx,eh(cb2,function(v) {
                         console.log(v);
@@ -634,6 +668,132 @@ m.load_electrum_wallet = function(wallet,cb,cbdone) {
     }
 
     cb(null,wallet);
+}
+
+if (process.argv.indexOf("server") >= 0) {
+
+    var host = process.env['MONGO_NODE_DRIVER_HOST'] != null ? process.env['MONGO_NODE_DRIVER_HOST'] : 'localhost';
+    var port = process.env['MONGO_NODE_DRIVER_PORT'] != null ? process.env['MONGO_NODE_DRIVER_PORT'] : Connection.DEFAULT_PORT;
+
+    var db = new Db('nodesx-wal', new Server(host, port), {safe: false}, {auto_reconnect: true}, {});
+
+    var Wallet;
+    db.open(function(err,dbb) {
+        db = dbb;
+        db.collection('wallet',function(err,collection) { 
+            if (err) { throw err; }
+            Wallet = collection;
+        }); 
+    });
+
+    var app = express();
+
+    app.configure(function(){                                                                 
+         app.set('views',__dirname + '/views');                                                  
+         app.set('view engine', 'jade'); app.set('view options', { layout: false });             
+         app.use(express.bodyParser());                                                          
+         app.use(express.methodOverride());                                                      
+         app.use(app.router);                                                                    
+         app.use(express.static(__dirname + '/public'));                                         
+    });
+
+    var active_wallets = {};
+
+    var mkrespcb = function(res,code,success) {
+        return eh(function(e) { res.json(e,code); },success);
+    }
+
+    var retrieve = function(name,pw,cb) {
+        if (active_wallets[name]) { 
+            if (pw == active_wallets[name].pw) {
+                 return cb(null,active_wallets[name]);
+            }
+            else { return cb("Bad password"); }
+        }       
+        Wallet.findOne({ name: name },eh(cb,function(w) {
+            if (w) {
+                if (pw == w.pw) { 
+                    m.load_electrum_wallet(w,null,eh(cb,function(w2) {
+                        cb(null,w2); 
+                    }));
+                }
+                else { cb("Bad password"); }
+            }
+            else { cb(null,null); }
+        }));
+    }
+
+    var hard_retrieve = function(req,cb) {
+        var name = ""+req.param("name"),
+            pw = sha256(""+req.param("pw"));
+        retrieve(name,pw,eh(cb,function(w) { w ? cb(null,w) : cb("No wallet") }));
+    }
+
+    var finalize_wallet = function(w) {
+        active_wallets[w.name] = w;
+        w.update = function() {
+            console.log("Updating wallet...");
+            Wallet.update({name: w.name},w,function(){});
+        }
+    }
+    
+    app.get('/get',function(req,res) {
+        var seed = sha256(""+req.param("name")+":"+req.param("pw")).substring(0,32),
+            name = ""+req.param("name"),
+            pw = sha256(""+req.param("pw"));
+
+        retrieve(name,pw,mkrespcb(res,400,function(w) {
+            if (w) {
+                finalize_wallet(w);
+                return res.json(w); 
+            }
+            m.load_electrum_wallet(seed,null,mkrespcb(res,400,function(w) {
+                w.name = name;
+                w.pw = pw;
+                Wallet.insert(w,mkrespcb(res,400,function(w2) {
+                    finalize_wallet(w);
+                    console.log("Finished loading: ",w);
+                    res.json(w);
+                }));
+            }));
+        }));
+    });
+    app.get('/balance',function(req,res) {
+        hard_retrieve(req,mkrespcb(res,400,function(w) {
+            w.getbalance(mkrespcb(res,400,function(balance) {
+                return res.json(balance);
+            }));
+        }));
+    });
+    app.get('/addr',function(req,res) {
+        hard_retrieve(req,mkrespcb(res,400,function(w) {
+            w.getaddress(mkrespcb(res,400,function(addr) {
+                return res.json(addr);
+            }));
+        }));
+    });
+    var send = function(req,res) {
+        var name = ""+req.param("name"),
+            pw = sha256(req.param("pw")),
+            to = req.param("to"),
+            value = parseInt(req.param("value"));
+        retrieve(name,pw,mkrespcb(res,400,function(w) {
+            if (!w) { 
+                return res.json("Wallet not found"); 
+            }
+            w.send(to,value,mkrespcb(res,400,function(tx) {
+                return res.json(tx);
+            }));
+        }));
+    }
+    app.get('/send',send);
+    app.post('/send',send);
+
+    app.get('/',function(req,res) {                                                           
+        res.render('main.jade',{});                                                           
+    });
+
+    app.listen(3191);
 }
 
 module.exports = m;

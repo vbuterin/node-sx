@@ -1,0 +1,14 @@
+.blue {
+    background-color: #ccf;
+}
+.grey {
+    background-color: #ddd;
+}
+.bigpill {
+    width: 500px;
+    max-width: 500px;
+    border-radius: 5px;
+    text-align: center;
+    padding: 10px;
+    word-wrap: break-word;
+}

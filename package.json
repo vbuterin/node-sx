@@ -4,9 +4,12 @@
     "description": "Node.js bindings for SX",
     "dependencies": {
         "underscore": "*",
-        "process": "*",
         "async": "*",
-        "long-stack-traces": "*"
+        "long-stack-traces": "*",
+        "crypto": "*",
+        "express": "3.1.0",
+        "jade": "*",
+        "mongodb": ">= 0.9.6-7"
     },
     "main": "main.js",
     "author": "vbuterin",
