@@ -5,7 +5,7 @@ body
     center
         table(style="margin:100px 0px",cellpadding="20px")
             tr
-                td.blue.bigpill#balance(colspan="2",style="height:100px; font-size:72px") [ Server reply will go here ]
+                td.blue.bigpill#balance(colspan="2",style="height:100px; font-size:72px") NodeSX Wallet
             tr
                 td.grey.bigpill#msg(colspan="2",style="display:none") 
             tr#notloggedin
@@ -19,6 +19,7 @@ body
                 td
                     div#addresses
                     button(onclick="GetAddress()")  Get address
+                    button(onclick="Reload()")  Reload
                 td
                     input#to(type="text",placeholder="Address")
                     br
