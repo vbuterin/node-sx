@@ -4,6 +4,10 @@
 .grey {
     background-color: #ddd;
 }
+.pill {
+    border-radius: 5px;
+    text-align: center;
+}
 .bigpill {
     width: 500px;
     max-width: 500px;
@@ -11,4 +15,15 @@
     text-align: center;
     padding: 10px;
     word-wrap: break-word;
+}
+.monospace {
+    font-family: monospace;
+    font-size: small;
+}
+.cmdline {
+    text-align: left;
+}
+.cmdline::before {
+    content: "> ";
+    color: #888;
 }

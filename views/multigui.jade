@@ -1,0 +1,49 @@
+head
+    script(src="angular.min.js")
+    script(src="util.js")
+    script(src="multigui.js")
+    link(rel="stylesheet",type="text/css",href="main.css")
+body(ng-app="multigui")
+    table(width="100%", align="center",ng-controller="MultiguiCtrl")
+        tr
+            td(width="40%",align="center",style="position:relative")
+                textarea.blue.bigpill.monospace(type="text",placeholder="ETO",rows="25",cols="80",ng-model="inputeto")
+                div.grey.pill(ng-show="message",ng-click="message = ''",style="position: absolute; top: 40%; padding: 3%; left: 20%; width: 54%; z-index: 10; opacity: 0.75; display:table-cell; word-wrap: break-word") {{ message }} 
+            td(align="center")
+                div(ng-repeat="i in [0,1,2,3,4]")
+                    input(type="text",placeholder="Pubkey",ng-model="msiginp.pubkeys[i]")
+                    br
+                input(type="text",placeholder="Sigs required to spend",ng-model="msiginp.k")
+                br
+                button(ng-click="getMultiAddr()") Get multisig address
+            td(align="center")
+                input(type="text",placeholder="From (address or txhash:index)",ng-model="msig.address")
+                br
+                input(type="text",placeholder="Script",ng-model="msig.raw")
+                br
+                input(type="text",placeholder="To",ng-model="tx.to")
+                br
+                input(type="text",placeholder="Value",ng-model="tx.value")
+                br
+                button(ng-click="mktx()") Make transaction
+            td(align="center")
+                div
+        tr
+            td(align="center")
+                span
+                    span Sign index: 
+                    select(type="text",ng-model="selectedindex",ng-options="i for i in indices")
+                div.grey.bigpill.monospace(style="min-height:100px; width:80%; margin-bottom:25px; text-align: left")
+                    div(ng-repeat="instr in instructions[selectedindex]")
+                        div.cmdline {{ instr }}
+            td(align="center")    
+                br
+                input(type="text",placeholder="Private key",ng-model="privkey")
+                br
+                button(ng-click="sign()") Sign transaction
+            td(align="center")
+                textarea(placeholder="Signature",rows="10",cols="35",style="font-size:small; font-family:monospace",ng-model="sig")
+                br
+                button(ng-click="apply()") Apply externally made signature
+            td(align="center")
+                button(ng-click="push()") Push transaction

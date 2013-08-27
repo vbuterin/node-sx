@@ -1,0 +1,31 @@
+head
+    script(src="angular.min.js")
+    script(src="util.js")
+    script(src="wallet.js")
+    link(rel="stylesheet",type="text/css",href="main.css")
+body(ng-app="wallet")
+    center(style="width:100%",ng-controller="WalletCtrl")
+        table(style="margin:100px 0px",cellpadding="20px")
+            tr
+                td.blue.bigpill(colspan="2",style="height:100px; font-size:72px") {{ balance }}
+            tr
+                td.grey.bigpill(colspan="2",ng-show="msg.text",ng-class="msg.class") {{ msg.text }}
+            tr(ng-hide="wallet")
+                td(colspan="2",style="text-align:center")
+                    input(type="text",placeholder="Name",ng-model="user.name")
+                    br
+                    input(type="text",placeholder="Password",ng-model="user.pw")
+                    br
+                    button(ng-click="login()") Login
+            tr(ng-show="wallet")
+                td
+                    div(ng-repeat="recv in wallet.recv",ng-click="monospace_show(recv)",style="margin:8px")
+                        span {{ recv.address }}
+                        br
+                    button(ng-click="getaddress()")  Get new address
+                td
+                    input(type="text",placeholder="Address",ng-model="sending.to")
+                    br
+                    input(type="text",placeholder="Value",ng-model="sending.value")
+                    br
+                    button(ng-click="send()") Send
