@@ -22,7 +22,7 @@ module.exports = function(wallet,cb,cbdone) {
     var txouniq = function(arr) { return _.uniq(arr,false,function(x) { return x.output; }); }
     var txodiff = function(arr1,arr2) {
         var del_outputs = arr2.map(function(x) { return x.output });
-        return arr1.filter(function(x) { return del_outputs.indexOf(x) == -1 });
+        return arr1.filter(function(x) { return del_outputs.indexOf(x.output) == -1 });
     }
 
     wallet.update_txoset = function(h) {
