@@ -28,7 +28,10 @@ function WalletCtrl($scope,$http) {
     $scope.send = function() {
         $scope.msg = { text: "Sending..." };
         $http.get("/send"+urlparams(merge($scope.user,$scope.sending)))
-            .success($scope.monospace_show)
+            .success(function(r) { 
+                $scope.monospace_show(r);
+                $scope.reload(); 
+            })
             .error($scope.errlogger);
     }
 

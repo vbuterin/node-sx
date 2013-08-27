@@ -158,12 +158,9 @@ module.exports = function(wallet,cb,cbdone) {
                 }
                 console.log(v);
                 sx.broadcast(tx,eh(cb2,function() {}));
+                sx.bci_pushtx(tx,eh(cb2,function() {}));
                 done(tx);
             }));
-            /*sx.bci_pushtx(tx,eh(cb2,function(ans) {
-                console.log(ans);
-                done(tx);
-            }));*/
         }));
     }
 
