@@ -33,3 +33,9 @@ var merge = function(o1, o2, etc) {
     }
     return o;
 }
+var partial = function(f, arg1, arg2, etc) {
+    var args = Array.prototype.slice.call(arguments,1);
+    return function() {
+        return f.apply(this,args.concat(Array.prototype.slice.call(arguments)));
+    }
+}

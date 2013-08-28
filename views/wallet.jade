@@ -23,6 +23,7 @@ body(ng-app="wallet")
                         span {{ recv.address }}
                         br
                     button(ng-click="getaddress()")  Get new address
+                    button(ng-click="reload(true)")  Refresh now
                 td
                     input(type="text",placeholder="Address",ng-model="sending.to")
                     br

@@ -3,10 +3,18 @@ angular.module('wallet', []);
 function WalletCtrl($scope,$http) {
     window.wscope = $scope;
 
-    $scope.loadwallet = function(r) {
+    var LW = function(resetmsg,r) {
+        if ($scope.debug) {
+            console.log('Loaded',resetmsg,r);
+            console.log('utxo',r.utxo.map(function(x) { return x.output }));
+            console.log('stxo',r.stxo.map(function(x) { return x.output }));
+        }
         $scope.wallet = r;
-        $scope.msg = {};
+        if (resetmsg) $scope.msg = {};
     }
+    $scope.loadwallet = partial(LW,true);
+    $scope.silent_loadwallet = partial(LW,false);
+
     $scope.errlogger = function(e) { $scope.msg = { text: e } }
 
     $scope.monospace_show = function(t) { $scope.msg = { class: 'monospace', text: t } }
@@ -15,11 +23,16 @@ function WalletCtrl($scope,$http) {
         $scope.balance = $scope.wallet ?
             $scope.wallet.utxo.reduce (function(sum,txo) { return sum+txo.value },0) / 100000000 :
             "NodeSX Wallet";
+        if ($scope.debug) {
+            console.log('Balance',$scope.balance);
+        }
     });
 
     $scope.login = function() {
+        if (!$scope.user) {
+             return $scope.wallet = null; 
+        }
         $scope.msg = { text: "Loading..." }
-        $scope.show_monospace = false;
         $http.get("/get"+urlparams($scope.user))
             .success($scope.loadwallet)
             .error($scope.errlogger);
@@ -42,8 +55,9 @@ function WalletCtrl($scope,$http) {
     }
 
     $scope.reload = function(force) {
-        $http.get("/get"+urlparams(merge($scope.user,force ? { force: force } : {})))
-            .success($scope.loadwallet)
+        if (force) { $scope.msg = { text: "Reloading..." } }
+        $http.get("/get"+urlparams(merge($scope.user,force ? { reload: force } : {})))
+            .success(force ? $scope.loadwallet: $scope.silent_loadwallet)
             .error($scope.errlogger);
     }
 

@@ -45,7 +45,7 @@ module.exports = function() {
         for (var v in active_wallets) {
             var w = active_wallets[v];
             w.update_history(function() {
-                console.log("Saving wallet...");
+                //console.log("Saving wallet...");
                 Wallet.update({name: w.name},w,function(){});
             });
         }
@@ -91,7 +91,10 @@ module.exports = function() {
                 active_wallets[w.name] = w;
                 if (req.param('reload')) {
                     console.log('Force reloading');
-                    w.update_history(mkrespcb(res,400,function() { return res.json(w); }));
+                    w.update_history(mkrespcb(res,400,function() {
+                        console.log("Finished loading: ",w);
+                        return res.json(w); 
+                    }));
                 }
                 else return res.json(w); 
             }
