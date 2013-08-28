@@ -107,11 +107,13 @@ var cmdcall = function(arg,args,inp,cb) {
         //console.log('inp',inp,'arg',arg);
         p.stdin.write(inp); 
     }
+    p.stdin.on('error',function(e) { console.log(e); });
     p.stdin.end();
     var data = "";
     p.stdout.on('data',function(d) { data += d; });
     p.stdout.on('close',function() { cb(null,strip(data)); });
     p.stdout.on('error',cb);
+    p.on('error',function(e) { console.log(e); });
 }
 
 m.newkey = _.partial(cmdcall,'newkey',null,null);

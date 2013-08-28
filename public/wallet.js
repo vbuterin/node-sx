@@ -61,5 +61,5 @@ function WalletCtrl($scope,$http) {
             .error($scope.errlogger);
     }
 
-    $scope.reloadInterval = setInterval($scope.reload,15000);
+    $scope.reloadInterval = setInterval($scope.reload,5000);
 }

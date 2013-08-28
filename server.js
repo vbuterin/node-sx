@@ -21,6 +21,7 @@ module.exports = function() {
 
     var Wallet;
     db.open(function(err,dbb) {
+        if (err) { throw err; }
         db = dbb;
         db.collection('wallet',function(err,collection) { 
             if (err) { throw err; }
@@ -49,7 +50,7 @@ module.exports = function() {
                 Wallet.update({name: w.name},w,function(){});
             });
         }
-    },15000);
+    },10000);
 
     var mkrespcb = function(res,code,success) {
         return eh(function(e) { res.json(e,code); },success);
