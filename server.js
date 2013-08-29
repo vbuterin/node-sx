@@ -1,16 +1,17 @@
-var sx = require('./sxlib.js'),
+var sx              = require('./sxlib.js'),
     electrum_wallet = require('./wallet.js'),
-    eto = require('./eto.js');
-    Db = require('mongodb').Db,
-    Connection = require('mongodb').Connection,
-    Server = require('mongodb').Server,
-    BSON = require('mongodb').BSON,
-    ObjectID = require('mongodb').ObjectID,
-    express = require('express'),
-    crypto = require('crypto'),
-    async = require('async'),
-    sha256 = function(x) { return crypto.createHash('sha256').update(x).digest('hex') },
-    eh = sx.eh;
+    eto             = require('./eto.js');
+    Db              = require('mongodb').Db,
+    Connection      = require('mongodb').Connection,
+    Server          = require('mongodb').Server,
+    BSON            = require('mongodb').BSON,
+    ObjectID        = require('mongodb').ObjectID,
+    express         = require('express'),
+    crypto          = require('crypto'),
+    async           = require('async'),
+    _               = require('underscore'),
+    sha256          = function(x) { return crypto.createHash('sha256').update(x).digest('hex') },
+    eh              = sx.eh;
 
 module.exports = function() {
 
@@ -175,7 +176,8 @@ module.exports = function() {
         var from   = req.param('from'),
             to     = req.param('to'),
             script = req.param('script'),
-            value  = Math.ceil(parseFloat(req.param('value')) * 100000000);
+            value  = Math.ceil(parseFloat(req.param('value')) * 100000000),
+            pk     = req.param('pk');
         async.waterfall([function(cb2) {
             if (from.length > 34) {
                 sx.fetch_transaction(utxoid.substring(0,64),eh(cb2,function(tx) {
@@ -199,8 +201,18 @@ module.exports = function() {
             scriptmap[utxo[0].address] = script;
             eto.mketo(tx,scriptmap,utxo,cb2);
         }],mkrespcb(res,400,function(eto_object) {
-            res.json(eto_object);
+            pk ? eto.signeto(eto_object,pk,mkrespcb(res,400,_.bind(res.json,res)))
+               : res.json(eto_object);
         }));
+    });
+
+    app.get('/mketo',function(req,res) {
+        var tx = req.param('tx'),
+            sm = {};
+        for (var p in req.query) {
+            if (27 <= p.length <= 34) { sm[p] = req.query[p]; }
+        }
+        eto.mketo(tx,sm,null,mkrespcb(res,400,_.bind(res.json,res)));
     });
 
     app.get('/signeto',function(req,res) {
@@ -211,7 +223,7 @@ module.exports = function() {
         catch(e) { 
             return res.json("Failed to JSON parse: ",req.param("eto")); 
         }
-        eto.signeto(eto_object,pk,mkrespcb(res,400,function(eto_object) { res.json(eto_object); }));
+        eto.signeto(eto_object,pk,mkrespcb(res,400,_.bind(res.json,res)));
     });
 
     app.get('/applysigtoeto',function(req,res) {
@@ -222,9 +234,7 @@ module.exports = function() {
         catch(e) { 
             return res.json("Failed to JSON parse: ",req.param("eto")); 
         }
-        eto.apply_sig_to_eto(eto_object,sig,mkrespcb(res,400,function(eto_object) {
-            res.json(eto_object);
-        }));
+        eto.apply_sig_to_eto(eto_object,sig,mkrespcb(res,400,_.bind(res.json,res)));
     });
     
     app.get('/pusheto',function(req,res) {
@@ -234,7 +244,27 @@ module.exports = function() {
         catch(e) { 
             return res.json("Failed to JSON parse: ",req.param("eto")); 
         }
-        eto.publish_eto(eto_object,mkrespcb(res,400,function(msg) { res.json(msg); }));
+        eto.publish_eto(eto_object,mkrespcb(res,400,_.bind(res.json,res)));
+    });
+
+    app.get('/history',function(req,res) {
+        console.log('grabbing',req.param('address'));
+        sx.history(req.param('address'),mkrespcb(res,400,function(h) {
+            console.log('grabbed');
+            if (req.param('unspent')) {
+                h = h.filter(function(x) { return x.spend });
+            }
+            if (req.param('confirmations')) {
+                h = h.filter(function(x) { return x.confirmations >= parseInt(req.param('confirmations')) });
+            }
+            return res.json(h);
+        }));
+    });
+
+    app.get('/addr_to_pubkey_or_script',function(req,res) {
+        sx.addr_to_pubkey(req.param('address'),mkrespcb(res,400,function(result) {
+            return res.json(result);
+        }));
     });
 
     app.get('/wallet',function(req,res) {                                                           

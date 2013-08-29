@@ -153,7 +153,10 @@ m.history = function(addrs,cb) {
                 address: obj.Address,
                 spend: (obj.spend == "Unspent") ? null : obj.spend,
                 value: parseInt(obj.value),
-                output: obj.output
+                output: obj.output,
+                confirmations: (obj.output_height == "Pending") 
+                    ? 0
+                    : height - parseInt(obj.output_height)
             }
         }
         cb(null,json.map(postprocess));
@@ -221,7 +224,7 @@ m.showtx = function(tx,cb) {
                 if (o.Input != undefined) {
                     ans.inputs.push({
                         prev: o["previous output"],
-                        script: o.script.split(' '),
+                        script: o.script ? o.script.split(' ') : null,
                         address: (27 < (o.address || "").length <= 34) ? o.address : null,
                         sequence: o.sequence
                     });
@@ -247,12 +250,18 @@ m.extract_pubkey_or_script_from_txin = function(txin,cb) {
     m.fetch_transaction(txin.substring(0,64),eh(cb,function(tx) {
         m.showtx(tx,eh(cb,function(shown) {
             var inp = parseInt(txin.substring(65));
-            if (shown.inputs[inp].script.length == 6) {
+            var txinobj = shown.inputs[inp];
+            if (!txinobj) {
+                return cb("Transaction input does not exist"); 
+            }
+            else if (txinobj.script.length == 6) {
                 var pub = shown.inputs[inp].script[4];
                 if (len(pub) == 66 || len(pub) == 130) { return cb(null,pub); }
                 return cb("Failed to parse script: "+shown.inputs[inp].script);
             }
-            else { m.rawscript(shown.inputs[inp].script,cb); }
+            else {
+                return cb(null,txinobj.script[txinobj.script.length-2]);
+            }
         }));
     }));
 }

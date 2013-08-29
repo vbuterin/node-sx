@@ -1,9 +1,8 @@
-.blue {
-    background-color: #88f;
-}
-.grey {
-    background-color: #ddd;
-}
+.blue { background-color: #88f; }
+.semilightblue { background-color: #aaf; }
+.lightblue { background-color: #ddf; }
+.white { background-color: #fff; }
+.grey { background-color: #ddd; }
 .pill {
     border-radius: 5px;
     text-align: center;
@@ -18,6 +17,9 @@
 }
 .monospace {
     font-family: monospace;
+    word-wrap: break-word;
+    max-width: 100%;
+    line-height: 1.1em;
     font-size: small;
 }
 .cmdline {
@@ -26,4 +28,34 @@
 .cmdline::before {
     content: "> ";
     color: #888;
+}
+.tabselect {
+    padding: 10px;
+}
+.textinput {
+    height: 25px !important;
+    word-wrap: break-word;
+}
+.fullwidth {
+    width: 100%;
+}
+table.tb {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    table-layout: fixed;
+}
+table.tb tr td {
+    word-wrap: break-word;
+}
+.tab {
+    position: absolute;
+    height: 100%
+}
+.tab table.tb {
+    padding: 20px;
+}
+td.td-label {
+    width: 80px;
 }

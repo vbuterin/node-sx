@@ -24,8 +24,10 @@ m.mketo = function(tx,scriptmap,utxo,cb) {
         sigs: []
     }
     utxo = utxo || [];
+    scriptmap = scriptmap || {};
 
     sx.showtx(tx,eh(cb,function(shown) {
+        eto.sigs = Array(shown.inputs.length);
         sx.cbmap_seq(_.range(shown.inputs.length),function(i,cb2) {
             var inp = shown.inputs[i];
             async.waterfall([function(cb3) {
@@ -43,16 +45,31 @@ m.mketo = function(tx,scriptmap,utxo,cb) {
                     }));
                 }
             },function(address,cb3) {
-                // Grab script from blockchain
-                if (scriptmap[address]) {
-                    cb3(null,scriptmap[address]);
+                if (shown.inputs[i].script) {
+                    eto.sigs[i] = true;
                 }
-                else sx.history(address,eh(cb2,function(h) {
+                // Grab pubkey/script from scriptmap
+                if (scriptmap[address]) {
+                    return cb3(null,scriptmap[address]);
+                }
+                // Grab pubkey/script from existing signed output
+                if (shown.inputs[i].script) {
+                    var scr = shown.inputs[i].script;
+                    if (scr[scr.length-1] == 'checksig') {
+                        return cb3(null,scr.filter(function(x) { return x.length >= 66 })[0]);
+                    }
+                    if (scr[scr.length-1] == 'checkmultisig') {
+                        return cb3(null,scr[scr.length-2]);
+                    }
+                }
+                // Grab script from blockchain
+                sx.history(address,eh(cb2,function(h) {
                     var stxo = h.filter(function(x) { return x.spend });
                     if (stxo.length === 0) {
                         cb2("Error: not given pubkey/scripthash and cannot find in blockchain");
                     }
-                    else sx.extract_pubkey_or_script_from_txin(h[0].spend,eh(cb,function(scr) {
+                    else sx.extract_pubkey_or_script_from_txin(stxo[0].spend,eh(cb,function(scr) {
+                        scriptmap[address] = scr;
                         cb3(null,scr);
                     }));
                 }));
@@ -72,13 +89,13 @@ var is_pubkey = function(hex) {
 m.process_multisignatures = function(eto,cb) {
 // Do we have enough signatures at any particular index?
     sx.foldr(_.range(eto.inputscripts.length),eto,function(eto,i,cb2) {
-        if (is_pubkey(eto.inputscripts[i])) {
+        if (is_pubkey(eto.inputscripts[i]) || eto.sigs[i] === true) {
             cb2(null,eto);
         }
-        else sx.apply_multisignatures_at_index(eto.tx,eto.inputscripts[i],i,eto.sigs[i],eh(cb2,function(newtx) {
+        else sx.apply_multisignatures_at_index(eto.tx,to.inputscripts[i],i,eto.sigs[i],eh(cb2,function(newtx) {
             //console.log("Applied multisigs: ",eto.tx,eto.inputscripts[i],i,eto.sigs[i],newtx);
             if (newtx != eto.tx) {
-                delete eto.sigs[i];
+                eto.sigs[i] = true;
                 eto.tx = newtx;
             }
             cb2(null,eto);
@@ -111,9 +128,7 @@ m.signeto = function(eto,pk,cb) {
             if (j == -1) {
                 return cb2(null,eto);
             }
-            console.log(5);
             sx.multisig_sign_tx_input(eto.tx,i,eto.inputscripts[i],pk,eh(cb2,function(sig) {
-                console.log(6,sig);
                 eto.sigs[i] = eto.sigs[i] || [];
                 eto.sigs[i][j] = sig; 
                 cb2(null,eto);
