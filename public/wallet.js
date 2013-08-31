@@ -12,8 +12,8 @@ function WalletCtrl($scope,$http) {
         $scope.wallet = r;
         if (resetmsg) $scope.msg = {};
     }
-    $scope.loadwallet = partial(LW,true);
-    $scope.silent_loadwallet = partial(LW,false);
+    $scope.loadwallet = _.partial(LW,true);
+    $scope.silent_loadwallet = _.partial(LW,false);
 
     $scope.errlogger = function(e) { $scope.msg = { text: e } }
 

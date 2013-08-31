@@ -27,7 +27,7 @@ m.deepclone = function(obj) {
 var eh = m.eh = function(fail, success) {
     return function(err, res) {
         if (err) {
-            //console.log('e',err,'f',fail,'s',success);
+            console.log('e',err,'f',fail,'s',success);
             if (fail) { fail(err); }
         }
         else {
@@ -99,6 +99,36 @@ m.foldr = function(array,init,f,cb) {
     inner(init,0);
 }
 
+m.is_base58 = function(data) {
+    return !!RegExp('^[0-9A-Za-z]*$').exec(data) && !m.is_hex(data);
+}
+m.is_hex = function(data) {
+    return !!RegExp('^[0-9a-fA-F]*$').exec(data);
+}
+
+m.is_pubkey = function(data) {
+    return m.is_hex(data) && (data.length == 66 || data.length == 130) &&
+        ['02','03','04'].indexOf(data.substring(0,2)) >= 0;
+}
+m.is_sig = function(data) {
+    return m.is_hex(data) && ['3044','3045','3046'].indexOf(data.substring(0,4)) >= 0;
+}
+
+m.is_script = function(data) {
+    return m.is_hex(data) && !m.is_hex_privkey(data) && !m.is_pubkey(data);
+}
+
+m.is_wif_privkey = function(x) {
+    return m.is_base58(x) && 40 <= x.length && x.length <= 60;
+}
+
+m.is_hex_privkey = function(x) {
+    return m.is_hex(x) && x.length == 64;
+}
+
+m.is_addr = function(x) {
+    return m.is_base58(x) && 20 <= x.length <= 34 && (x[0] == '1' || x[0] == '3');
+}
 
 var cmdcall = function(arg,args,inp,cb) {
     if (!args) args = [];
@@ -109,31 +139,65 @@ var cmdcall = function(arg,args,inp,cb) {
     }
     p.stdin.on('error',function(e) { console.log(e); });
     p.stdin.end();
-    var data = "";
+    var data = "",
+        error = "";
     p.stdout.on('data',function(d) { data += d; });
-    p.stdout.on('close',function() { cb(null,strip(data)); });
-    p.stdout.on('error',cb);
-    p.on('error',function(e) { console.log(e); });
+    p.stderr.on('data',function(d) { error += d; });
+    p.on('exit',function(exitcode) {
+        if (exitcode == 0) { cb(null,strip(data)); }
+        else { cb(strip(error)); }
+    });
+    p.on('error',function(e) { console.log(e); cb(e); });
 }
 
 m.newkey = _.partial(cmdcall,'newkey',null,null);
-m.pubkey = _.partial(cmdcall,'pubkey',null);
+m.pubkey = function(priv,cb) {
+    if (m.is_hex_privkey(priv)) {
+        return m.base58check_encode(priv,128,eh(cb,function(wif) {
+            cmdcall('pubkey',null,wif,cb);
+        }));
+    }
+    else cmdcall('pubkey',null,priv,cb);
+}
+// Pubkeys and wif privkeys only
 m.addr = _.partial(cmdcall,'addr',null);
+// Universal
+m.toaddress = function(inp,cb) {
+    if (m.is_pubkey(inp) && m.is_wif_privkey(inp)){
+        m.addr(inp,cb);
+    }
+    else if (m.is_hex_privkey(inp)) {
+        m.base58_encode(inp,128,eh(cb,function(wif) {
+            m.addr(wif,cb);
+        }));
+    }
+    else if (m.is_script(inp)) {
+        m.scripthash(inp,cb);
+    }
+    else if (m.is_addr(inp)) {
+        cb(null,inp);
+    }
+    else cb("Weird input: "+inp,400);
+}
 m.decode_addr = _.partial(cmdcall,'decode-addr',null);
 m.newseed = _.partial(cmdcall,'newseed',null,null);
 m.mpk = _.partial(cmdcall,'mpk',null);
 m.mnemonic = _.partial(cmdcall,'mnemonic',null);
 m.btc = _.partial(cmdcall,'btc',null);
 m.satoshi = _.partial(cmdcall,'satoshi',null);
+m.base58check_encode = function(hexstr,vb,cb) { 
+    return cmdcall('base58check-encode',[hexstr,vb],null,cb);
+}
+m.base58check_decode = _.partial(cmdcall,'base58check-decode',null)
 
-m.genpriv = function(seed,count,bit,cb) {
-    bit = bit ? 1 : 0;
-    cmdcall('genpriv',[count,bit],seed,cb);
-}
-m.genaddr = function(seed,count,bit,cb) {
-    bit = bit ? 1 : 0;
-    cmdcall('genaddr',[count,bit],seed,cb);
-}
+var gens = ['genpriv','genpub','genaddr']
+gens.map(function(cmd) {
+    m[cmd] = function(seed,count,bit,cb) {
+        bit = bit ? 1 : 0;
+        cmdcall(cmd,[count,bit],seed,cb);
+    }
+});
+
 m.qrcode = function(data,cb) {
     var filename = '/tmp/sxnode-qr' + (""+Math.random()).substring(2,11) + ".png";
     cmdcall('qrcode',[data,filename],null,eh(cb,_.partial(cb,null,filename)));
@@ -146,7 +210,11 @@ m.bci_fetch_last_height = _.partial(cmdcall,'bci-fetch-last-height',null,null);
 
 m.history = function(addrs,cb) {
     if (typeof addrs === "string") { addrs = [addrs]; }
-    var process_history = _.once(function(history,height) {
+    var height, history, historyloaded;
+    var process_final = _.once(function(height,history) {
+        if (!history) {
+            return cb(null,[]);
+        }
         var json = m.jsonfy(history);
         var postprocess = function(obj) {
             return {
@@ -161,17 +229,19 @@ m.history = function(addrs,cb) {
         }
         cb(null,json.map(postprocess));
     });
-    m.fetch_last_height(eh(cb,function(height) {
-        cmdcall('history',addrs,null,eh(cb,function(history) {
-            process_history(history,height);
-        }));
-    }));
-    /*m.bci_fetch_last_height(eh(cb,function(height) {
-        cmdcall('bci-history',addrs,null,eh(cb,function(history) {
-            console.log('bh',addrs,history);
-            process_history(history,height);
-        }));
-    }));*/
+    var process_height = function(ht) {
+        height = ht;
+        if (height && historyloaded) process_final(height,history);
+    }
+    var process_history = function(hs) {
+        history = hs;
+        historyloaded = true;
+        if (height && historyloaded) process_final(height,history);
+    }
+    m.fetch_last_height(eh(cb,process_height));
+    m.bci_fetch_last_height(eh(null,process_height));
+    cmdcall('history',addrs,null,eh(cb,process_history));
+    cmdcall('bci-history',addrs,null,eh(null,process_history));
 }
 
 m.scripthash = _.partial(cmdcall,'scripthash',null);
@@ -192,24 +262,28 @@ var txop = function(arg, args, output_tx, tx, inp, cb) {
         p.stdin.end();
         var data = "";
         p.stdout.on('data',function(d) { data += d; });
-        p.stdout.on('close',function() { 
-            if (output_tx) { 
+        var error = "";
+        p.stderr.on('data',function(d) { error += d; });
+        p.on('exit',function(exitcode) { 
+            console.log(data,error,exitcode,args);
+            if (exitcode != 0) { cb(strip(error)); }
+            else if (output_tx) { 
                 fs.readFile(filename,eh(cb,function(tx) { cb(null,""+tx); }));
             }
             else { cb(null,strip(data)); }
         });
-        p.stdout.on('error',cb);
+        p.on('error',cb);
     }));
 }
 
 m.mktx = function(inputs, outputs, cb) {
-    var args = inputs.map(function(x) { 
-        if (x.output) { return " -i "+x.output; }
-        else return " -i "+x;
+    var args = [];
+    inputs.map(function(x) { 
+        args = args.concat(["-i",x.output ? x.output : x]);
     });
-    args = args.concat(outputs.map(function(x) {
-        return " -o "+ x.address + ":" + x.value;
-    }));
+    outputs.map(function(x) {
+        args = args.concat(["-o",x.address + ":" + x.value]);
+    });
     txop('mktx',args,true,null,null,cb);
 }
 
@@ -249,6 +323,7 @@ m.showtx = function(tx,cb) {
 m.extract_pubkey_or_script_from_txin = function(txin,cb) {
     m.fetch_transaction(txin.substring(0,64),eh(cb,function(tx) {
         m.showtx(tx,eh(cb,function(shown) {
+            console.log(shown);
             var inp = parseInt(txin.substring(65));
             var txinobj = shown.inputs[inp];
             if (!txinobj) {
@@ -256,7 +331,7 @@ m.extract_pubkey_or_script_from_txin = function(txin,cb) {
             }
             else if (txinobj.script.length == 6) {
                 var pub = shown.inputs[inp].script[4];
-                if (len(pub) == 66 || len(pub) == 130) { return cb(null,pub); }
+                if (pub.length == 66 || pub.length == 130) { return cb(null,pub); }
                 return cb("Failed to parse script: "+shown.inputs[inp].script);
             }
             else {

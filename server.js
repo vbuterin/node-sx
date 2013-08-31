@@ -83,7 +83,11 @@ module.exports = function() {
         retrieve(name,pw,eh(cb,function(w) { w ? cb(null,w) : cb("No wallet") }));
     }
 
-    app.get('/get',function(req,res) {
+    var smartParse = function(x) {
+        return (typeof x == "string") ? JSON.parse(x) : x;
+    }
+
+    app.use('/get',function(req,res) {
         var seed = sha256(""+req.param("name")+":"+req.param("pw")).substring(0,32),
             name = ""+req.param("name"),
             pw = sha256(""+req.param("pw"));
@@ -111,14 +115,14 @@ module.exports = function() {
             }));
         }));
     });
-    app.get('/addr',function(req,res) {
+    app.use('/addr',function(req,res) {
         hard_retrieve(req,mkrespcb(res,400,function(w) {
             w.getaddress(mkrespcb(res,400,function(address) {
                 return res.json(address);
             }));
         }));
     });
-    app.get('/reset',function(req,res) {
+    app.use('/reset',function(req,res) {
         hard_retrieve(req,mkrespcb(res,400,function(w) {
             Wallet.remove({ name: w.name },mkrespcb(res,400,function() {
                 delete active_wallets[w.name];
@@ -149,11 +153,12 @@ module.exports = function() {
             }));
         }));
     }
-    app.get('/send',send);
+    app.use('/send',send);
     app.post('/send',send);
 
-    app.get('/msigaddr',function(req,res) {
+    app.use('/msigaddr',function(req,res) {
         var pubs = [];
+        req.query = _.extend(req.query,req.body)
         for (var v in req.query) {
             if (v.substring(0,3) == "pub") {
                 if (req.query[v].length == 66 || req.query[v].length == 130) {
@@ -172,7 +177,29 @@ module.exports = function() {
         }));
     });
 
-    app.get('/mkmultitx',function(req,res) {
+    app.use('/showtx',function(req,res) {
+        sx.showtx(req.param('tx'),mkrespcb(res,400,_.bind(res.json,res)));
+    });
+
+    app.use('/privtopub',function(req,res) {
+        sx.pubkey(req.param('pk'),mkrespcb(res,400,_.bind(res.json,res)));
+    });
+
+    app.use('/addrtopub',function(req,res) {
+        sx.addr_to_pubkey(req.param('address'),mkrespcb(res,400,_.bind(res.json,res)));
+    });
+
+    app.use('/sigs',function(req,res) {
+        var inp = req.param('tx') ||  smartParse(req.param('eto'));
+        eto.extract_signatures(inp,mkrespcb(res,400,_.bind(res.json,res)));
+    });
+
+    app.use('/toaddress',function(req,res) {
+        var inp = req.param('pub') || req.param('pk') || req.param('script');
+        sx.toaddress(inp,mkrespcb(res,400,_.bind(res.json,res)));
+    });
+
+    app.use('/mkmultitx',function(req,res) {
         var from   = req.param('from'),
             to     = req.param('to'),
             script = req.param('script'),
@@ -206,53 +233,54 @@ module.exports = function() {
         }));
     });
 
-    app.get('/mketo',function(req,res) {
+    app.use('/mketo',function(req,res) {
         var tx = req.param('tx'),
             sm = {};
+        req.query = _.extend(req.query,req.body)
         for (var p in req.query) {
             if (27 <= p.length <= 34) { sm[p] = req.query[p]; }
         }
         eto.mketo(tx,sm,null,mkrespcb(res,400,_.bind(res.json,res)));
     });
 
-    app.get('/signeto',function(req,res) {
+    app.use('/signeto',function(req,res) {
         try {
-            var eto_object = JSON.parse(req.param('eto')),
+            var eto_object = smartParse(req.param('eto')),
                 pk = req.param('privkey');
         }
         catch(e) { 
-            return res.json("Failed to JSON parse: ",req.param("eto")); 
+            return res.json("Failed to JSON parse: "+req.param("eto"),400); 
         }
         eto.signeto(eto_object,pk,mkrespcb(res,400,_.bind(res.json,res)));
     });
 
-    app.get('/applysigtoeto',function(req,res) {
+    app.use('/applysigtoeto',function(req,res) {
         try {
-            var eto_object = JSON.parse(req.param('eto')),
+            var eto_object = smartParse(req.param('eto')),
                 sig = req.param('sig');
         }
         catch(e) { 
-            return res.json("Failed to JSON parse: ",req.param("eto")); 
+            return res.json("Failed to JSON parse: "+req.param("eto"),400); 
         }
         eto.apply_sig_to_eto(eto_object,sig,mkrespcb(res,400,_.bind(res.json,res)));
     });
     
-    app.get('/pusheto',function(req,res) {
+    app.use('/pusheto',function(req,res) {
         try {
-            var eto_object = JSON.parse(req.param('eto'));
+            var eto_object = smartParse(req.param('eto'));
         }
         catch(e) { 
-            return res.json("Failed to JSON parse: ",req.param("eto")); 
+            return res.json("Failed to JSON parse: "+req.param("eto"),400); 
         }
         eto.publish_eto(eto_object,mkrespcb(res,400,_.bind(res.json,res)));
     });
 
-    app.get('/history',function(req,res) {
+    app.use('/history',function(req,res) {
         console.log('grabbing',req.param('address'));
         sx.history(req.param('address'),mkrespcb(res,400,function(h) {
             console.log('grabbed');
             if (req.param('unspent')) {
-                h = h.filter(function(x) { return x.spend });
+                h = h.filter(function(x) { return !x.spend });
             }
             if (req.param('confirmations')) {
                 h = h.filter(function(x) { return x.confirmations >= parseInt(req.param('confirmations')) });
@@ -261,17 +289,17 @@ module.exports = function() {
         }));
     });
 
-    app.get('/addr_to_pubkey_or_script',function(req,res) {
+    app.use('/addr_to_pubkey_or_script',function(req,res) {
         sx.addr_to_pubkey(req.param('address'),mkrespcb(res,400,function(result) {
             return res.json(result);
         }));
     });
 
-    app.get('/wallet',function(req,res) {                                                           
+    app.use('/wallet',function(req,res) {                                                           
         res.render('wallet.jade',{});                                                           
     });
 
-    app.get('/multigui',function(req,res) {                                                           
+    app.use('/multigui',function(req,res) {                                                           
         res.render('multigui.jade',{});                                                           
     });
 

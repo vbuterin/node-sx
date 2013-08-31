@@ -5,53 +5,121 @@ function MultiguiCtrl($scope,$http) {
 
     $scope.msiginp = { pubkeys: [] }
     $scope.msig = {}
+    $scope.tx = {}
     $scope.activetab = 0;
 
-    $scope.errlogger = function(e) { $scope.message = e; }
+    $scope.dialog = function(d,e) {
+        $scope.message = { title: d, body: e }
+    }
+    $scope.inprogress = function(e) { 
+        $scope.message = { title: "Loading", body: e, loading: true }
+    }
+    $scope.errlogger = _.partial($scope.dialog,"Error");
+    $scope.txpushed = _.partial($scope.dialog,"Transaction");
+    $scope.clearmessage = function() { $scope.message = null; }
+
     $scope.show_eto = function(eto) { 
         $scope.message = "";
         $scope.eto = eto;
         $scope.inputeto = JSON.stringify(eto);
+        return eto;
     }
 
+    //Replaces private key or address in pubkey slot i with the pubkey
+    $scope.convertKey = function(obj,prop,cb) {
+        cb = cb || function(){};
+        // Is already a pubkey
+        if ($scope.is_pubkey(obj[prop]) || !obj[prop]) {
+            return cb(obj[prop]) 
+        }
+        // Is a private key in either format
+        else if ($scope.is_wif_privkey(obj[prop]) || $scope.is_hex_privkey(obj[prop])) {
+            $scope.inprogress("Attempting private key to public key conversion");
+            $http.post('/privtopub',{ pk: obj[prop] })
+                .success(function(r) {
+                    $scope.clearmessage();
+                    var r = r.replace(/"/g,'');
+                    obj[prop] = r;
+                    cb(r);
+                })
+                .error($scope.clearmessage);
+        }
+        // Is an address
+        else if ($scope.is_addr(obj[prop])) {
+            var addr = obj[prop];
+            $scope.inprogress("Attempting to recover public key from blockchain");
+            $http.post('/addrtopub',{ address: obj[prop] })
+                .success(function(r) {
+                    $scope.clearmessage();
+                    var r = r.replace(/"/g,'');
+                    obj[prop] = r;
+                    cb(r);
+                })
+                .error(function(r) {
+                    if (addr == obj[prop]) { obj[prop] = "" }
+                    dispatch(r) ? $scope.errlogger(dispatch(r))
+                                : $scope.clearmessage();
+                });
+        }
+        // Is an abbreviated public key
+        else if ($scope.is_hex(obj[prop]) && obj[prop].length >= 5) {
+            var opts = [];
+            for (var pub in $scope.etosigarray) {
+                if (pub.indexOf(obj[prop]) == 0) { opts.push(pub); }
+            }
+            if (opts.length == 1) { obj[prop] = pub; }
+        }
+    }
+
+    //Retrieves multisig address from data in $scope.msiginp
     $scope.getMultiAddr = function() {
         var obj = { k: $scope.msiginp.k || 0, n: 0 }
         for (var i in $scope.msiginp.pubkeys) {
             if ($scope.msiginp.pubkeys[i]) {
                 obj["pub"+i] = $scope.msiginp.pubkeys[i];
+                if (!$scope.is_pubkey(obj["pub"+i])) {
+                    return $scope.convertKey($scope.msiginp.pubkeys,i);
+                }
                 obj.n += 1;
             }
         }
         if (obj.k == 0 || obj.n == 0 || obj.k > obj.n) { 
             return $scope.msig = {};
         }
-        $http.get("/msigaddr"+urlparams(obj))
-            .success(function(r) {
-                $scope.msig = r;
-                $scope.balance = "Retrieving..."
-                console.log($scope.balance);
-            })
-            .error($scope.errlogger);
+        $http.post("/msigaddr",obj)
+            .success(setter($scope,'msig'))
     }
 
     $scope.$watch('msiginp',$scope.getMultiAddr,true);
+    $scope.$watch('msiginp.pubkeys',$scope.getMultiAddr,true);
+    $scope.$watch('instrpubkey',function() { $scope.convertKey($scope,'instrpubkey') });
 
-    $scope.getaddrbalance = function(address) {
-        console.log('f',address);
+    $scope.help = function(key) {
+        $scope.message = {
+            title: "Help",
+            body: help[key],
+            actiontext: "Don't show help",
+            action: function() { $scope.hidehelp = true; $scope.message = null; }
+        }
+    }
+
+    //Get address balance
+    $scope.getaddrbalance = function(address,showretrieving) {
         if (!address) return $scope.balance = null;
-        console.log('grabbing');
-        $http.get("/history"+urlparams({ address: address, unspent: true }))
+        if (showretrieving) $scope.balance = "Retrieving..."
+        $http.post("/history",{ address: address, unspent: true })
             .success(function(r) {
                 $scope.balance = r.reduce(function(s,txo) { return s + txo.value },0) / 100000000;
             })
-            .error($scope.errlogger);
     }
-    //setInterval(function() { $scope.getaddrbalance($scope.msig.address) },5000);
-    $scope.$watch('msig.address',$scope.getaddrbalance);
 
+    $scope.$watch('msig.address',$scope.getaddrbalance);
+    setInterval(function() { $scope.getaddrbalance($scope.msig.address,false) },10000);
+
+    //Try to sync address -> scripthash
     $scope.$watch('msig.address',function(address) {
         if (!$scope.msig.script && address) {
-            $http.get("/addr_to_pubkey_or_script"+urlparams({ address: address }))
+            $http.post("/addr_to_pubkey_or_script",{ address: address })
                 .success(function(r) {
                     $scope.msig.raw = $scope.msig.raw || r.replace(/"/g,'');
                 })
@@ -59,22 +127,41 @@ function MultiguiCtrl($scope,$http) {
         }
     });
 
+    //Try to sync scripthash -> address
+    $scope.$watch('msig.raw',function() {
+        if (!$scope.msig.raw) return;
+        $http.post("/toaddress",{ script: $scope.msig.raw })
+            .success(function(x) {
+                if ($scope.msig.address != x) {
+                    $scope.msig.address = x.replace(/"/g,'');
+                }
+            })
+    });
+
+    //Make transaction and ETO from data in $scope.tx and $scope.msig
     $scope.mktx = function() {
         $scope.tx = $scope.tx || {};
         $scope.tx.from = $scope.msig.address;
         $scope.tx.script = $scope.msig.raw;
-        $http.get("/mkmultitx"+urlparams($scope.tx))
-            .success(function(r) { $scope.show_eto(r); $scope.activetab = 2; })
+        $scope.inprogress("Creating transaction");
+        $http.post("/mkmultitx",$scope.tx)
+            .success(function(r) { 
+                $scope.show_eto(r);
+                $scope.activetab = 2;
+                $scope.clearmessage();
+            })
             .error($scope.errlogger);
     }
 
+    //Sign ETO
     $scope.sign = function() {
-        $scope.errlogger("Loading");
-        $http.get("/signeto"+urlparams({ eto: $scope.inputeto, privkey: $scope.tx.pk }))
-            .success($scope.show_eto)
+        $scope.inprogress("Signing transaction");
+        $http.post("/signeto",{ eto: $scope.inputeto, privkey: $scope.pk })
+            .success(_.compose($scope.clearmessage,$scope.show_eto))
             .error($scope.errlogger)
     }
 
+    //Watch for user-inputted ETO
     $scope.$watch('inputeto',function() {
         var m = /^[0-9a-f][0-9a-f]*$/.exec($scope.inputeto);
         if (m) {
@@ -82,24 +169,36 @@ function MultiguiCtrl($scope,$http) {
             if ($scope.msig.address && $scope.msig.raw) {
                 map[$scope.msig.address = $scope.msig.raw];
             }
-            $http.get('/mketo'+urlparams(map))
+            $http.post('/mketo',map)
                 .success($scope.show_eto)
-                .error($scope.errlogger);
         }
-        else {
+        else if ($scope.inputeto) {
             try { $scope.eto = JSON.parse($scope.inputeto); }
             catch(e) { $scope.errlogger(e); }
         }
     });
 
+    // Self-explanatory methods
+    $scope.is_base58 = function(data) {
+        return data && !!RegExp('^[0-9A-Za-z]*$').exec(data) && !$scope.is_hex(data);
+    }
+    $scope.is_hex = function(data) {
+        return data && !!RegExp('^[0-9a-fA-F]*$').exec(data);
+    }
     $scope.is_pubkey = function(x) {
-        return ['02','03','04'].indexOf(x.substring(0,2)) >= 0 && ['66','130'].indexOf(x.length) >= 0;
+        return x && ['02','03','04'].indexOf(x.substring(0,2)) >= 0 && [66,130].indexOf(x.length) >= 0;
     }
-
     $scope.is_wif_privkey = function(x) {
-        return (x[0] == '5' || x[0] == 'K') && 40 <= x.length <= 60;
+        return $scope.is_base58(x) && 40 <= x.length && x.length <= 60;
+    }
+    $scope.is_hex_privkey = function(x) {
+        return $scope.is_hex(x) && x.length == 64;
+    }
+    $scope.is_addr = function(x) {
+        return x && $scope.is_base58(x) && 20 <= x.length && x.length <= 34;
     }
 
+    //Given something in eto.inputscripts, return a list of pubkeys
     $scope.pubkeys_from_script = function(scr) {
         if ($scope.is_pubkey(scr)) {
             return scr;
@@ -119,6 +218,11 @@ function MultiguiCtrl($scope,$http) {
         return o;
     }
 
+    //Returns an object { <pub1>: [ <sig-pub1-0>, <sig-pub1-1>... ], ... }
+    //where <sig-pub[i]-[j]> = 0 if input j does not need pubkey i's signature
+    //                         1 if input j is signed by pubkey i
+    //                         2 if input j is fully signed
+    //                         -1 if input j is not signed by pubkey i
     $scope.sig_array_from_eto = function(eto) {
         if (!eto) { return null; }
         var pubkeyarray = eto.inputscripts.map($scope.pubkeys_from_script);
@@ -129,26 +233,26 @@ function MultiguiCtrl($scope,$http) {
                 arr[pubkeyarray[i][j]][i] = 
                       !eto.sigs            ? -1
                     : !eto.sigs[i]         ? -1
-                    : eto.sigs[i] === true ? 1
+                    : eto.sigs[i] === true ? 2
                     : !!eto.sigs[i][j]     ? 1 : -1;
             }
         }
         return arr;
     }
 
+    //Updates the instructions for signing an input with SX
+    //Uses $scope.eto and instrpubkey
     $scope.update_instructions = function() {
         var indices = [];
         var arr = ($scope.etosigarray || {})[$scope.instrpubkey];
-        console.log($scope.instrpubkey,$scope.etosigarray,arr);
         if (!arr) {
-            return $scope.instructions = [];
+            return $scope.instructions = null;
         }
         for (var i = 0; i < arr.length; i++) {
-            console.log(arr[i]);
             if (arr[i] == -1) { indices.push(i); }
         }
         if (indices.length === 0) {
-            return $scope.instructions = [];
+            return $scope.instructions = null;
         }
         $scope.instructions = [
             "privkey=[PUT PRIVKEY HERE WITHOUT BRACKETS]",
@@ -162,38 +266,39 @@ function MultiguiCtrl($scope,$http) {
     $scope.$watch('etosigarray',$scope.update_instructions);
     $scope.$watch('instrpubkey',$scope.update_instructions);
 
+    //When the ETO changes, change the etosigarray object
     $scope.$watch('eto',function() {
         $scope.indices = [];
         $scope.instructions = [];
         $scope.etopubkeys = [];
-        for (var s in ($scope.eto || {}).inputscripts) {
-            var i = $scope.indices.length,
-                scr = $scope.eto.inputscripts[i];
-            $scope.indices.push(i);
-            $scope.instructions[i] = [
-                "privkey=[PUT PRIVKEY HERE WITHOUT BRACKETS]",
-                "index=[PUT INDEX HERE WITHOUT BRACKETS]",
-                "echo "+$scope.eto.tx+" > /tmp/12345",
-                "echo $privkey | sx sign-input /tmp/12345 "+i+" "+scr
-            ];
-        }
         $scope.etosigarray = $scope.sig_array_from_eto($scope.eto);
-        $scope.etofullysigned = $scope.eto 
-            ? $scope.eto.sigs.reduce(function(t,s) { return t && (s === true) },true)
-            : false;
+        if ($scope.eto) {
+            $scope.etofullysigned = $scope.eto.sigs.reduce(function(t,s) { return t && (s === true) },true)
+            $http.post('/sigs',{eto: $scope.eto})
+                .success(setter($scope,'etosigs'))
+        }
+        else {
+            $scope.etofullysigned = false;
+        }
     });
 
+    //Apply externally made signature to ETO
     $scope.apply = function() {
-        $scope.errlogger("Loading");
-        $http.get("/applysigtoeto"+urlparams({ eto: $scope.inputeto, sig: $scope.sig }))
-            .success($scope.show_eto)
+        $scope.inprogress("Applying signature");
+        $http.post("/applysigtoeto",{ eto: $scope.inputeto, sig: $scope.sig })
+            .success(function(r) {
+                $scope.show_eto(r);
+                $scope.sig = "";
+                $scope.clearmessage();
+            })
             .error($scope.errlogger)
     }
 
+    //Push completed transaction
     $scope.push = function() {
-        $scope.errlogger("Loading");
-        $http.get("/pusheto"+urlparams({ eto: $scope.inputeto }))
-            .success($scope.errlogger)
+        $scope.inprogress("Pushing transaction");
+        $http.post("/pusheto",{ eto: $scope.inputeto })
+            .success($scope.txpushed)
             .error($scope.errlogger)
     }
 }
