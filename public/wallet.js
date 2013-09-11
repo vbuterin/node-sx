@@ -33,14 +33,14 @@ function WalletCtrl($scope,$http) {
              return $scope.wallet = null; 
         }
         $scope.msg = { text: "Loading..." }
-        $http.get("/get"+urlparams($scope.user))
+        $http.post("/get",$scope.user)
             .success($scope.loadwallet)
             .error($scope.errlogger);
     }
 
     $scope.send = function() {
         $scope.msg = { text: "Sending..." };
-        $http.get("/send"+urlparams(merge($scope.user,$scope.sending)))
+        $http.post("/send",merge($scope.user,$scope.sending))
             .success(function(r) { 
                 $scope.monospace_show(r);
                 $scope.reload(); 
@@ -49,14 +49,14 @@ function WalletCtrl($scope,$http) {
     }
 
     $scope.getaddress = function() {
-        $http.get("/addr"+urlparams($scope.user))
+        $http.post("/addr",$scope.user)
             .success(function(r) { wallet.recv += r; })
             .error($scope.errlogger);
     }
 
     $scope.reload = function(force) {
         if (force) { $scope.msg = { text: "Reloading..." } }
-        $http.get("/get"+urlparams(merge($scope.user,force ? { reload: force } : {})))
+        $http.post("/get",merge($scope.user,force ? { reload: force } : {}))
             .success(force ? $scope.loadwallet: $scope.silent_loadwallet)
             .error($scope.errlogger);
     }

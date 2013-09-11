@@ -226,7 +226,7 @@ m.apply_sig_to_eto = function(eto,sig,cb) {
                 m.process_multisignatures(eto,cb); 
             }
             else if (status == "EXISTSIG") {
-                cb("Output already signed");
+                cb("Input already signed");
             }
             else cb("Signature not valid for any input");
         }));
@@ -237,7 +237,12 @@ m.publish_eto = function(eto,cb) {
     var done = _.once(cb);
     var fail = _.after(2,cb);
     sx.txhash(eto.tx,eh(done,function(hash) {
+        console.log('');
         sx.validtx(eto.tx,eh(fail,function(v) {
+            var result = sx.jsonfy(v)[0].Status;
+            if (result != "Success") { 
+                return done("Invalid signature"); 
+            }
             sx.broadcast(eto.tx,eh(fail,function(result) {
                 done(null,{ hash: hash, result: v });
             }));

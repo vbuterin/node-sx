@@ -8,7 +8,9 @@
         "long-stack-traces": "*",
         "crypto": "*",
         "express": "3.1.0",
+        "thirty-two": "*",
         "jade": "*",
+        "notp": "*",
         "mongodb": ">= 0.9.6-7"
     },
     "main": "main.js",

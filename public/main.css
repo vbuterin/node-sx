@@ -7,6 +7,12 @@
     border-radius: 5px;
     text-align: center;
 }
+.bigpill {
+    border-radius: 5px;
+    text-align: center;
+    width: 500px;
+    max-width: 500px;
+}
 .monospace {
     font-family: monospace;
     word-wrap: break-word;
@@ -17,6 +23,13 @@
 .squish {
     line-height: 1.2em;
     font-size: small;
+}
+.largetext {
+    font-size: 18px;
+}
+.verylargetext {
+    font-size: 72px;
+    height: 100px;
 }
 .signature {
     font-family: monospace;
@@ -36,9 +49,12 @@
 .tabselect {
     padding: 10px;
 }
+.tabwindow {
+    position: relative;
+}
 .tabwindow .tabheader {
     position: absolute;
-    top: 20px;
+    top: 0px;
     height: 40px;
 }
 .tabheader .tabselect {
@@ -46,10 +62,10 @@
 }
 .tabwindow .tabbody {
     position: absolute;
-    top: 70px;
-    left: 20px;
-    bottom: 20px;
-    width: 93%;
+    top: 50px;
+    left: 0px;
+    bottom: 0px;
+    width: 100%;
 }
 .raise4 {
     position: relative;

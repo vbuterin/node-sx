@@ -39,20 +39,3 @@ var setter = function(obj,prop) {
         return val;
     }
 }
-_ = {};
-_.partial = function(f, arg1, arg2, etc) {
-    var args = Array.prototype.slice.call(arguments,1);
-    return function() {
-        return f.apply(this,args.concat(Array.prototype.slice.call(arguments)));
-    }
-}
-_.compose = function() {
-  var funcs = arguments;
-  return function() {
-    var args = arguments;
-    for (var i = funcs.length - 1; i >= 0; i--) {
-      args = [funcs[i].apply(this, args)];
-    }
-    return args[0];
-  };
-};

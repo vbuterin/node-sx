@@ -25,6 +25,8 @@ function MultiguiCtrl($scope,$http) {
         return eto;
     }
 
+    $scope.tryApply = function() { if (!$scope.$$phase) $scope.$apply() }
+
     //Replaces private key or address in pubkey slot i with the pubkey
     $scope.convertKey = function(obj,prop,cb) {
         cb = cb || function(){};
@@ -34,15 +36,7 @@ function MultiguiCtrl($scope,$http) {
         }
         // Is a private key in either format
         else if ($scope.is_wif_privkey(obj[prop]) || $scope.is_hex_privkey(obj[prop])) {
-            $scope.inprogress("Attempting private key to public key conversion");
-            $http.post('/privtopub',{ pk: obj[prop] })
-                .success(function(r) {
-                    $scope.clearmessage();
-                    var r = r.replace(/"/g,'');
-                    obj[prop] = r;
-                    cb(r);
-                })
-                .error($scope.clearmessage);
+            obj[prop] = privtopub(obj[prop]);
         }
         // Is an address
         else if ($scope.is_addr(obj[prop])) {
@@ -67,27 +61,39 @@ function MultiguiCtrl($scope,$http) {
             for (var pub in $scope.etosigarray) {
                 if (pub.indexOf(obj[prop]) == 0) { opts.push(pub); }
             }
-            if (opts.length == 1) { obj[prop] = pub; }
+            if (opts.length == 1) { obj[prop] = opts[0]; }
         }
     }
 
     //Retrieves multisig address from data in $scope.msiginp
     $scope.getMultiAddr = function() {
-        var obj = { k: $scope.msiginp.k || 0, n: 0 }
+        var pubs = [];
         for (var i in $scope.msiginp.pubkeys) {
             if ($scope.msiginp.pubkeys[i]) {
-                obj["pub"+i] = $scope.msiginp.pubkeys[i];
-                if (!$scope.is_pubkey(obj["pub"+i])) {
+                pubs.push($scope.msiginp.pubkeys[i]);
+                if (!$scope.is_pubkey($scope.msiginp.pubkeys[i])) {
                     return $scope.convertKey($scope.msiginp.pubkeys,i);
                 }
-                obj.n += 1;
             }
         }
-        if (obj.k == 0 || obj.n == 0 || obj.k > obj.n) { 
+        var k = $scope.msiginp.k,
+            n = pubs.length;
+            pubs.sort(function(x,y) { return x>y });
+
+        if (!k || n == 0 || k > n) { 
             return $scope.msig = {};
         }
-        $http.post("/msigaddr",obj)
-            .success(setter($scope,'msig'))
+        var script = [k].concat(pubs).concat([n,174]),
+            raw = rawscript(script),
+            addr = script_to_address(raw);
+        
+        $scope.msig = {
+            k: k,
+            n: n,
+            pubs: pubs,
+            raw: raw,
+            address: addr
+        }
     }
 
     $scope.$watch('msiginp',$scope.getMultiAddr,true);
@@ -130,12 +136,7 @@ function MultiguiCtrl($scope,$http) {
     //Try to sync scripthash -> address
     $scope.$watch('msig.raw',function() {
         if (!$scope.msig.raw) return;
-        $http.post("/toaddress",{ script: $scope.msig.raw })
-            .success(function(x) {
-                if ($scope.msig.address != x) {
-                    $scope.msig.address = x.replace(/"/g,'');
-                }
-            })
+        $scope.msig.address = script_to_address($scope.msig.raw);
     });
 
     //Make transaction and ETO from data in $scope.tx and $scope.msig
@@ -155,10 +156,7 @@ function MultiguiCtrl($scope,$http) {
 
     //Sign ETO
     $scope.sign = function() {
-        $scope.inprogress("Signing transaction");
-        $http.post("/signeto",{ eto: $scope.inputeto, privkey: $scope.pk })
-            .success(_.compose($scope.clearmessage,$scope.show_eto))
-            .error($scope.errlogger)
+        $scope.eto = sign_eto($scope.eto,$scope.pk);
     }
 
     //Watch for user-inputted ETO
@@ -266,32 +264,39 @@ function MultiguiCtrl($scope,$http) {
     $scope.$watch('etosigarray',$scope.update_instructions);
     $scope.$watch('instrpubkey',$scope.update_instructions);
 
-    //When the ETO changes, change the etosigarray object
+    //When the ETO changes, change the etosigarray object and the inputeto object
     $scope.$watch('eto',function() {
         $scope.indices = [];
         $scope.instructions = [];
         $scope.etopubkeys = [];
         $scope.etosigarray = $scope.sig_array_from_eto($scope.eto);
         if ($scope.eto) {
-            $scope.etofullysigned = $scope.eto.sigs.reduce(function(t,s) { return t && (s === true) },true)
-            $http.post('/sigs',{eto: $scope.eto})
-                .success(setter($scope,'etosigs'))
+            $scope.etofullysigned = $scope.eto.sigs
+                .reduce(function(t,s) { return t && (s === true) },true)
+            $scope.etosigs = get_sigs($scope.eto);
         }
         else {
             $scope.etofullysigned = false;
         }
+        var j = JSON.stringify($scope.eto);
+        if (j != $scope.inputeto) $scope.inputeto = j;
     });
 
     //Apply externally made signature to ETO
     $scope.apply = function() {
         $scope.inprogress("Applying signature");
-        $http.post("/applysigtoeto",{ eto: $scope.inputeto, sig: $scope.sig })
-            .success(function(r) {
-                $scope.show_eto(r);
-                $scope.sig = "";
-                $scope.clearmessage();
-            })
-            .error($scope.errlogger)
+        setTimeout(function() {
+            try {
+                apply_sig_to_eto($scope.eto,$scope.sig,function(eto) {
+                    $scope.eto = eto;
+                    $scope.message = null;
+                    $scope.tryApply();
+                },_.compose($scope.tryApply,$scope.errlogger));
+            }
+            catch(e) { 
+                _.compose($scope.tryApply,$scope.errlogger)(e);
+            }
+        },100);
     }
 
     //Push completed transaction

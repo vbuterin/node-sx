@@ -19,6 +19,35 @@ module.exports = function(wallet,cb,cbdone) {
     cb = cb || function(){};
     cbdone = cbdone || function(){};
 
+    wallet.actionqueue = [];
+    wallet.locked = false;
+
+    var queuewrapper = function(f) {
+        var callback = arguments[arguments.length-1],
+            front = Array.prototype.slice.call(arguments,0,arguments.length-1);
+        var smartcb = function(err,res) {
+            if (wallet.actionqueue.length === 0) {
+                wallet.locked = false;
+                return cb(err,res); 
+            }
+            else {
+                var first = wallet.actionqueue.splice(0,1)[0],
+                    fn = first[0],
+                    args = first.slice(1);
+                fn.apply(wallet,args);
+            }
+        }
+        return function() {
+            if (wallet.locked) {
+                wallet.actionqueue.push([f].concat(front.concat([smartcb])));   
+            }
+            else {
+                wallet.locked = true;
+                f.apply(wallet,front.concat([smartcb]));
+            }
+        }
+    }
+
     var txouniq = function(arr) { return _.uniq(arr,false,function(x) { return x.output; }); }
     var txodiff = function(arr1,arr2) {
         var del_outputs = arr2.map(function(x) { return x.output });
@@ -45,7 +74,7 @@ module.exports = function(wallet,cb,cbdone) {
         return wallet.stxo.length+" "+wallet.utxo.length != origt;
     }
 
-    wallet.update_change_addresses = function(cb2) {
+    wallet.update_change_addresses = queuewrapper(function(cb2) {
         console.log("Loading change addresses...");
         var original_change_length = wallet.change.length;
         sx.cbuntil(function(cb2) {
@@ -63,9 +92,9 @@ module.exports = function(wallet,cb,cbdone) {
             console.log("Loaded "+n+" new change addresses");
             cb2(null,n>0);
         }));
-    }
+    })
 
-    wallet.load_receiving_addresses = function(cb2) {
+    wallet.load_receiving_addresses = queuewrapper(function(cb2) {
         console.log("Loading receiving addresses");
         var old_recv = wallet.recv;
         sx.cbmap(_.range(old_recv.length,wallet.n),function(i,cb3) {
@@ -78,9 +107,9 @@ module.exports = function(wallet,cb,cbdone) {
             console.log("Have " + wallet.n + " receiving addresses (" + newadds + " new)");
             cb2(null,newadds > 0);
         }));
-    }
+    })
 
-    wallet.update_history = function(cb2) {
+    wallet.update_history = queuewrapper(function(cb2) {
         console.log("Updating history");
         var recv = wallet.recv.map(function(x) { return x.address; });
         var change = wallet.change.map(function(x) { return x.address; });
@@ -91,7 +120,7 @@ module.exports = function(wallet,cb,cbdone) {
             wallet.postprocess()
             cb2(null,changed);
         }));
-    }
+    })
 
     wallet.full_update = function(cb2) {
         async.series([
@@ -101,7 +130,7 @@ module.exports = function(wallet,cb,cbdone) {
         ],cb2);
     }
     
-    wallet.getaddress = function(change,cb2) {
+    wallet.getaddress = queuewrapper(function(change,cb2) {
         if (typeof change == "function") {
             cb2 = change; change = false;
         }
@@ -115,10 +144,10 @@ module.exports = function(wallet,cb,cbdone) {
                 cb2(null,data);
             }));
         }));
-    }
+    })
 
 
-    wallet.mk_signed_transaction = function(to,value,cb2) {
+    var mk_signed_transaction = function(to,value,cb2) {
         sx.get_enough_utxo_from_history(wallet.utxo,value+10000,eh(cb2,function(utxo) {
             var lastaddr = wallet.change[wallet.change.length-1].address;
             sx.make_sending_transaction(utxo,to,value,lastaddr,eh(cb2,function(tx) {
@@ -132,7 +161,7 @@ module.exports = function(wallet,cb,cbdone) {
         }));
     }
 
-    wallet.push_signed_transaction = function(tx, usedtxo, cb2) {
+    var push_signed_transaction = function(tx, usedtxo, cb2) {
         async.series({
             shown: _.partial(sx.showtx,tx),
             hash: _.partial(sx.txhash,tx),
@@ -165,13 +194,13 @@ module.exports = function(wallet,cb,cbdone) {
         }));
     }
 
-    wallet.send = function(to, value, cb2) {
+    wallet.send = queuewrapper(function(to, value, cb2) {
         console.log("Attempting to send "+value+" satoshis to "+to);
-        wallet.mk_signed_transaction(to,value,eh(cb2,function(obj) {
+        mk_signed_transaction(to,value,eh(cb2,function(obj) {
             console.log("Transaction created, attempting to push");
-            wallet.push_signed_transaction(obj.tx,obj.utxo,cb2);
+            push_signed_transaction(obj.tx,obj.utxo,cb2);
         }));
-    }
+    })
 
     cb(null,wallet);
     wallet.full_update(eh(cbdone,function() { cbdone(null,wallet); }));

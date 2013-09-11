@@ -37,6 +37,18 @@ var eh = m.eh = function(fail, success) {
 };
 
 // Splits text into JSON objects, using zero indent as the splitter
+// Example:
+//
+// Bob: 123
+//   Joe: 78782
+//   Fred: 111
+// Wilson: 540   
+//   Ashley: 0
+// -> 
+// [
+//   { Bob: 123, Joe: 78782, Fred: 111 },
+//   { Wilson: 540, Ashley: 0 }
+// ]
 m.jsonfy = function(txt) {
     var lines = txt.split('\n').filter(identity).map(function(x) {
         return {
@@ -111,7 +123,7 @@ m.is_pubkey = function(data) {
         ['02','03','04'].indexOf(data.substring(0,2)) >= 0;
 }
 m.is_sig = function(data) {
-    return m.is_hex(data) && ['3044','3045','3046'].indexOf(data.substring(0,4)) >= 0;
+    return m.is_hex(data) && ['304'].indexOf(data.substring(0,3)) >= 0;
 }
 
 m.is_script = function(data) {
@@ -130,9 +142,11 @@ m.is_addr = function(x) {
     return m.is_base58(x) && 20 <= x.length <= 34 && (x[0] == '1' || x[0] == '3');
 }
 
-var cmdcall = function(arg,args,inp,cb) {
-    if (!args) args = [];
-    var p = spawn("sx",[arg].concat(args));
+var sanitize = function(x) { return (x+"").replace(/[^A-Za-z0-9\-\/:\[\]]/g,'') }
+
+var cmdcall = function(cmd,args,inp,cb) {
+    args = (args || []).map(sanitize);
+    var p = spawn("sx",[sanitize(cmd)].concat(args));
     if (inp) { 
         //console.log('inp',inp,'arg',arg);
         p.stdin.write(inp); 
@@ -162,22 +176,22 @@ m.pubkey = function(priv,cb) {
 // Pubkeys and wif privkeys only
 m.addr = _.partial(cmdcall,'addr',null);
 // Universal
-m.toaddress = function(inp,cb) {
-    if (m.is_pubkey(inp) && m.is_wif_privkey(inp)){
-        m.addr(inp,cb);
+m.toaddress = function(input,cb) {
+    if (m.is_pubkey(input) && m.is_wif_privkey(input)){
+        m.addr(input, cb);
     }
-    else if (m.is_hex_privkey(inp)) {
-        m.base58_encode(inp,128,eh(cb,function(wif) {
-            m.addr(wif,cb);
+    else if (m.is_hex_privkey(input)) {
+        m.base58_encode(input,128,eh(cb,function(wif) {
+            m.addr(wif, cb);
         }));
     }
-    else if (m.is_script(inp)) {
-        m.scripthash(inp,cb);
+    else if (m.is_script(input)) {
+        m.scripthash(input, cb);
     }
-    else if (m.is_addr(inp)) {
-        cb(null,inp);
+    else if (m.is_addr(input)) {
+        cb(null, input);
     }
-    else cb("Weird input: "+inp,400);
+    else cb("Weird input: "+input, 400);
 }
 m.decode_addr = _.partial(cmdcall,'decode-addr',null);
 m.newseed = _.partial(cmdcall,'newseed',null,null);
@@ -250,29 +264,15 @@ m.showscript = function(inp,cb) {
     cmdcall('showscript',null,inp,eh(cb,function(s) { cb(null,strip(s).split(' ')); }));
 }
 
-var txop = function(arg, args, output_tx, tx, inp, cb) {
+var txop = function(cmd, args, output_tx, tx, inp, cb) {
     var filename = '/tmp/sxnode-' + (""+Math.random()).substring(2,11);
     fs.writeFile(filename,tx || "",eh(cb,function() {
-        args = [filename].concat(args || []);
-        //console.log('fn',filename,'args',args,'a',arguments);
-        var p = spawn("sx",[arg].concat(args));
-        if (inp) { 
-            p.stdin.write(inp); 
-        }
-        p.stdin.end();
-        var data = "";
-        p.stdout.on('data',function(d) { data += d; });
-        var error = "";
-        p.stderr.on('data',function(d) { error += d; });
-        p.on('exit',function(exitcode) { 
-            console.log(data,error,exitcode,args);
-            if (exitcode != 0) { cb(strip(error)); }
-            else if (output_tx) { 
+        cmdcall(cmd,[filename].concat(args || []),inp,eh(cb,function(stdout) {
+            if (output_tx) { 
                 fs.readFile(filename,eh(cb,function(tx) { cb(null,""+tx); }));
             }
-            else { cb(null,strip(data)); }
-        });
-        p.on('error',cb);
+            else { cb(null,stdout); }
+        }));
     }));
 }
 
@@ -323,7 +323,6 @@ m.showtx = function(tx,cb) {
 m.extract_pubkey_or_script_from_txin = function(txin,cb) {
     m.fetch_transaction(txin.substring(0,64),eh(cb,function(tx) {
         m.showtx(tx,eh(cb,function(shown) {
-            console.log(shown);
             var inp = parseInt(txin.substring(65));
             var txinobj = shown.inputs[inp];
             if (!txinobj) {
@@ -395,7 +394,7 @@ m.get_enough_utxo_from_history = function(h,amount,cb) {
         totalval += utxo[i].value;
         if (totalval >= amount) { return cb(null,utxo.slice(0,i+1)); }
     }
-    return cb({ err: "Not enough money", value: totalval, needed: amount});
+    return cb("Not enough money. Have: "+totalval+", needed: "+amount);
 }
 
 // Gets UTXO set paying value _value_ from address set _[from]_
@@ -532,7 +531,6 @@ m.apply_multisignatures_at_index = function(tx,script,index,sigobj,cb) {
             m.set_input(tx,index,r,cb);
         }));
     }));
-    
 }
 
 m.multisig_sign_tx_input = m.sign_input;
@@ -550,8 +548,12 @@ m.sign_tx_inputs = function(tx, privs, utxo, cb) {
                     return utxomap[shown.inputs[i].prev] &&
                            x.address == utxomap[shown.inputs[i].prev].address;
                 });
-                if (good_addrdata.length === 0) { return cb2(null,tx); }
-                else m.sign_tx_input(tx,i,good_addrdata[0],cb2);
+                if (good_addrdata.length === 0) { 
+                    return cb2(null,tx); 
+                }
+                else { 
+                    m.sign_tx_input(tx,i,good_addrdata[0],cb2); 
+                }
             },cb);
         }));
     }));
