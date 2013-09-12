@@ -50,7 +50,8 @@ function TFAWalletCtrl($scope,$http) {
             $http.post('/register',{
                 name: $scope.user.name,
                 pub1: $scope.user.pub,
-                pub2: $scope.user.bkpub
+                pub2: $scope.user.bkpub,
+                checksum: checksum
             })
             .then(function(resp) {
                 ($scope.message || {}).body = "Processing response";

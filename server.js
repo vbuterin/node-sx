@@ -429,7 +429,8 @@ module.exports = function() {
         console.log('Attempting registration or login');
         var name = req.param('name'),
             pubs = getreqpubs(req),
-            k = parseInt(req.param("k") || 2);
+            k = parseInt(req.param("k") || 2),
+            checksum = req.param('checksum');
         if (pubs.error) {
             return res.json(pubs.error,400);   
         }
@@ -439,22 +440,8 @@ module.exports = function() {
         pubs = [config.pub].concat(pubs);
         Twofactor.findOne({ name: name },mkrespcb(res,400,function(tf) {
             if (tf && tf.verified) {
-                var sameAccount = true;
-                if (k != tf.addrdata.k) {
-                    sameAccount = false;
-                }
-                // TODO
-                /*// Use the user-provided pubkey as the equivalent of a hashed
-                // password; obviously easily breakable, but this just protects
-                // against accidental login errors
-                for (var i = 0; i < pubs.length; i++) {
-                    if (tf.addrdata.pubs.indexOf(pubs[i]) == -1) {
-                        console.log(pubs[i],tf.addrdata.pubs);
-                        sameAccount = false;
-                    }
-                }*/
-                if (!sameAccount) {
-                    return res.json("Account exists, incorrect data",400);
+                if (checksum != tf.checksum) {
+                    return res.json("Account exists, incorrect password",400);
                 }
                 return res.json({
                     verified: true,
@@ -474,6 +461,7 @@ module.exports = function() {
                     var obj = {
                         name: name,
                         key: key,
+                        checksum: checksum,
                         verified: false,
                         addrdata: addrdata
                     };
