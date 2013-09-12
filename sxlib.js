@@ -12,6 +12,9 @@ var m = {};
 var strip = function(s) { return s.replace(/^\s+|\s+$/g, '') }
 var identity = function(x) { return x; }
 
+// Set to 'bci' to make the system use blockchain.info
+m.mode = 'bci';
+
 m.deepclone = function(obj) {
     if (_.isArray(obj)) {
         return obj.map(function(x) { return m.deepclone(x); });
@@ -252,10 +255,10 @@ m.history = function(addrs,cb) {
         historyloaded = true;
         if (height && historyloaded) process_final(height,history);
     }
-    m.fetch_last_height(eh(cb,process_height));
-    m.bci_fetch_last_height(eh(null,process_height));
-    cmdcall('history',addrs,null,eh(cb,process_history));
-    cmdcall('bci-history',addrs,null,eh(null,process_history));
+    m.mode == 'sx' ? m.fetch_last_height(eh(cb,process_height))
+                   : m.bci_fetch_last_height(eh(null,process_height));
+    m.mode == 'sx' ? cmdcall('history',addrs,null,eh(cb,process_history))
+                   : cmdcall('bci-history',addrs,null,eh(null,process_history));
 }
 
 m.scripthash = _.partial(cmdcall,'scripthash',null);
@@ -365,23 +368,45 @@ m.validtx = function(tx,cb) { txop("validtx",[],false,tx,null,cb); }
 
 m.broadcast = m.broadcast_tx = function(tx,cb) {
     async.waterfall([function(cb2) {
+        m.validtx(tx,eh(cb2,function(r) {
+            var result = m.jsonfy(r)[0].Status;
+            if (result != "Success") return cb2(result);
+            cb2();
+        }));
+    }, _.partial(m.txhash,tx)
+    , function(hash,cb2) {
         var filename = '/tmp/sxnode-' + (""+Math.random()).substring(2,11);
-        fs.writeFile(filename,tx || "",eh(cb,function() { cb2(null,filename); }));
-    }, function(filename,cb2) {
+        fs.writeFile(filename,tx || "",eh(cb,function() { cb2(null,hash,filename); }));
+    }, function(hash,filename,cb2) {
         var p = spawn("sx",['broadcast-tx',filename]);
         p.stdin.end();
-        var data = "";
-        var count = 0;
         p.stdout.on('data',function(d) { 
-            data += d; count++; console.log(""+d);
-            if (count >= 25) { return cb2(null,data); }
+            // Keep checking for the transaction with SX, and report success only
+            // if we receive it
+            m.fetch_transaction(hash,function(err,tx) {
+                if (tx) {
+                    return cb(null,hash);
+                }
+            });
         });
-        p.stdout.on('close',function() { cb2(null,data); });
+        p.stdout.on('close',function() {
+            cb2("Status unknown, submission may have failed"); 
+        });
         p.stdout.on('error',cb);
     }],cb);
 }
 
-m.bci_pushtx = function(tx,cb) { txop("bci-pushtx",null,false,tx,null,cb); }
+m.bci_pushtx = function(tx,cb) { 
+    txop("bci-pushtx",null,false,tx,null,eh(cb,function(r) {
+        try {
+            if (r == "Transaction Submitted") {
+                m.txhash(tx,cb);
+            }
+            else cb(r);
+        }
+        catch(e) { cb(e) }
+    }));
+}
 
 m.get_enough_utxo_from_history = function(h,amount,cb) {
     var utxo = h.filter(function(x) { return !x.spend });

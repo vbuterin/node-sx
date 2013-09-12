@@ -235,23 +235,8 @@ m.apply_sig_to_eto = function(eto,sig,cb) {
 }
 
 m.publish_eto = function(eto,cb) {
-    var done = _.once(cb);
-    var fail = _.after(2,cb);
-    sx.txhash(eto.tx,eh(done,function(hash) {
-        console.log('');
-        sx.validtx(eto.tx,eh(fail,function(v) {
-            var result = sx.jsonfy(v)[0].Status;
-            if (result != "Success") { 
-                return done("Invalid signature"); 
-            }
-            sx.broadcast(eto.tx,eh(fail,function(result) {
-                done(null,{ hash: hash, result: v });
-            }));
-        }));
-        sx.bci_pushtx(eto.tx,eh(fail,function(reply) {
-            done(null, { hash: hash, result: reply });
-        }));
-    }));
+    sx.mode == 'eto' ? sx.broadcast(eto.tx,cb)
+                     : sx.bci_pushtx(eto.tx,cb);
 }
 
 module.exports = m;
