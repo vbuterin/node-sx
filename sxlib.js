@@ -399,10 +399,8 @@ m.broadcast = m.broadcast_tx = function(tx,cb) {
 m.bci_pushtx = function(tx,cb) { 
     txop("bci-pushtx",null,false,tx,null,eh(cb,function(r) {
         try {
-            console.log('r',r);
             if (r == "Transaction Submitted") {
                 m.txhash(tx,eh(cb,function(hash) {
-                    console.log('h',hash);
                     cb(null,hash);
                 }));
             }
