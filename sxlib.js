@@ -401,7 +401,10 @@ m.bci_pushtx = function(tx,cb) {
         try {
             console.log('r',r);
             if (r == "Transaction Submitted") {
-                m.txhash(tx,cb);
+                m.txhash(tx,eh(cb,function(hash) {
+                    console.log('h',hash);
+                    cb(null,hash);
+                }));
             }
             else cb(r);
         }
