@@ -1,17 +1,13 @@
 {
     "name": "node-sx",
-    "version": "0.0.5",
+    "version": "0.0.6",
     "description": "Node.js bindings for SX",
     "dependencies": {
         "underscore": "*",
         "async": "*",
         "long-stack-traces": "*",
         "crypto": "*",
-        "express": "3.1.0",
-        "thirty-two": "*",
-        "jade": "*",
-        "notp": "*",
-        "mongodb": ">= 0.9.6-7"
+        "express": "3.1.0"
     },
     "main": "main.js",
     "author": "vbuterin",
