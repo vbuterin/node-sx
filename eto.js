@@ -12,10 +12,11 @@
 //   ]
 // }
 
-var sx = require('./sxlib.js'),
-    _  = require('underscore'),
-    eh = sx.eh,
-    m  = {};
+var sx    = require('./sxlib.js'),
+    _     = require('underscore'),
+    async = require('async'),
+    eh    = sx.eh,
+    m     = {};
 
 var identity = function(x) { return x; }
 
