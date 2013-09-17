@@ -235,8 +235,12 @@ m.apply_sig_to_eto = function(eto,sig,cb) {
 }
 
 m.publish_eto = function(eto,cb) {
-    sx.mode == 'eto' ? sx.broadcast(eto.tx,cb)
-                     : sx.bci_pushtx(eto.tx,cb);
+    sx.validtx(eto.tx,eh(cb,function(result) {
+        if (result != "Success") {
+            cb(result);
+        }
+        else sx.broadcast(eto.tx,cb);
+    }));
 }
 
 module.exports = m;
