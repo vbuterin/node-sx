@@ -12,9 +12,6 @@ var m = {};
 var strip = function(s) { return s.replace(/^\s+|\s+$/g, '') }
 var identity = function(x) { return x; }
 
-// Set to 'bci' to make the system use blockchain.info
-m.mode = 'bci';
-
 m.deepclone = function(obj) {
     if (_.isArray(obj)) {
         return obj.map(function(x) { return m.deepclone(x); });
@@ -72,6 +69,8 @@ m.jsonfy = function(txt) {
     if (!_.isEmpty(cur)) { out.push(cur); }
     return out;
 }
+
+m.noop = function(){};
 
 m.cbuntil = function(f,cb) {
     f(eh(cb,function(res) {
@@ -225,9 +224,8 @@ m.fetch_transaction = _.partial(cmdcall,'fetch-transaction',null);
 m.fetch_last_height = _.partial(cmdcall,'fetch-last-height',null,null);
 m.bci_fetch_last_height = _.partial(cmdcall,'bci-fetch-last-height',null,null);
 
-m.history = function(addrs,cb) {
+m.get_history = function(blkfetch,histfetch,addrs,cb) {
     if (typeof addrs === "string") { addrs = [addrs]; }
-    var height, history, historyloaded;
     var process_final = _.once(function(height,history) {
         if (!history) {
             return cb(null,[]);
@@ -246,20 +244,17 @@ m.history = function(addrs,cb) {
         }
         cb(null,json.map(postprocess));
     });
-    var process_height = function(ht) {
-        height = ht;
-        if (height && historyloaded) process_final(height,history);
-    }
-    var process_history = function(hs) {
-        history = hs;
-        historyloaded = true;
-        if (height && historyloaded) process_final(height,history);
-    }
-    m.mode == 'sx' ? m.fetch_last_height(eh(cb,process_height))
-                   : m.bci_fetch_last_height(eh(null,process_height));
-    m.mode == 'sx' ? cmdcall('history',addrs,null,eh(cb,process_history))
-                   : cmdcall('bci-history',addrs,null,eh(null,process_history));
+    blkfetch(eh(cb,function(height) {
+        histfetch(eh(cb,function(history) {
+            process_final(height,history);
+        }));
+    }));
 }
+m.raw_sx_history = function(addrs,cb) { cmdcall('history',addrs,null,cb); }
+m.raw_bci_history = function(addrs,cb) { cmdcall('bci-history',addrs,null,cb); }
+
+m.history = _.partial(m.get_history,m.fetch_last_height,m.raw_sx_history);
+m.bci_history = _.partial(m.get_history,m.bci_fetch_last_height,m.raw_bci_history);
 
 m.scripthash = _.partial(cmdcall,'scripthash',null);
 m.rawscript = function(inp,cb) { cmdcall('rawscript',inp,null,cb); }
@@ -364,7 +359,12 @@ m.validate_input = function(tx,index,script,sig,pubkey,cb) {
 
 m.set_input = function(tx,index,inp,cb) { txop("set-input",[index],false,tx,inp,cb); }
 
-m.validtx = function(tx,cb) { txop("validtx",[],false,tx,null,cb); }
+m.validtx = function(tx,cb) { 
+    txop("validtx",[],false,tx,null,eh(cb,function(r) {
+        try { cb(null,m.jsonfy(r)[0].Status); }
+        catch(e) { cb(e) }
+    }));
+}
 
 m.broadcast = m.broadcast_tx = function(tx,cb) {
     async.waterfall([function(cb2) {
