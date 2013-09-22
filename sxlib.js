@@ -146,11 +146,9 @@ m.is_addr = function(x) {
 
 var sanitize = function(x) { return (x+"").replace(/[^A-Za-z0-9\-\/:\[\]]/g,'') }
 
-var cmdcall = function(cmd,args,inp,cb) {
-    args = (args || []).map(sanitize);
-    var p = spawn("sx",[sanitize(cmd)].concat(args));
+var call = function(cmd,args,inp,cb) {
+    var p = spawn(cmd,args);
     if (inp) { 
-        //console.log('inp',inp,'arg',arg);
         p.stdin.write(inp); 
     }
     p.stdin.on('error',function(e) { console.log(e); });
@@ -159,11 +157,17 @@ var cmdcall = function(cmd,args,inp,cb) {
         error = "";
     p.stdout.on('data',function(d) { data += d; });
     p.stderr.on('data',function(d) { error += d; });
+    var argz = arguments
     p.on('exit',function(exitcode) {
         if (exitcode == 0) { cb(null,strip(data)); }
-        else { cb(strip(error)); }
+        else { console.log(strip(error)); cb(strip(error)); }
     });
     p.on('error',function(e) { console.log(e); cb(e); });
+}
+
+var cmdcall = function(sxcmd,args,inp,cb) {
+    args = (args || []).map(sanitize)
+    return call("sx",[sanitize(sxcmd)].concat(args),inp,cb);
 }
 
 m.newkey = _.partial(cmdcall,'newkey',null,null);
@@ -221,8 +225,12 @@ m.qrcode = function(data,cb) {
 
 m.balance = _.partial(cmdcall,'balance',null);
 m.fetch_transaction = _.partial(cmdcall,'fetch-transaction',null);
+m.blke_fetch_transaction = _.partial(cmdcall,'blke-fetch-transaction',null);
 m.fetch_last_height = _.partial(cmdcall,'fetch-last-height',null,null);
 m.bci_fetch_last_height = _.partial(cmdcall,'bci-fetch-last-height',null,null);
+m.bci_transaction_exists = function(hash,cb) {
+    cmdcall('bci-transaction-exists',[hash],null,cb);
+}
 
 m.get_history = function(blkfetch,histfetch,addrs,cb) {
     if (typeof addrs === "string") { addrs = [addrs]; }
@@ -245,7 +253,7 @@ m.get_history = function(blkfetch,histfetch,addrs,cb) {
         cb(null,json.map(postprocess));
     });
     blkfetch(eh(cb,function(height) {
-        histfetch(eh(cb,function(history) {
+        histfetch(addrs,eh(cb,function(history) {
             process_final(height,history);
         }));
     }));
@@ -380,20 +388,12 @@ m.broadcast = m.broadcast_tx = function(tx,cb) {
     }, function(hash,filename,cb2) {
         var p = spawn("sx",['broadcast-tx',filename]);
         p.stdin.end();
-        p.stdout.on('data',function(d) { 
-            // Keep checking for the transaction with SX, and report success only
-            // if we receive it
-            m.fetch_transaction(hash,function(err,tx) {
-                if (tx) {
-                    return cb(null,hash);
-                }
-            });
-        });
         p.stdout.on('close',function() {
             cb2("Status unknown, submission may have failed"); 
         });
         p.stdout.on('error',cb);
-    }],cb);
+        return cb2(null,hash)
+    }],eh(cb,function(hash) { return cb(null,hash) }));
 }
 
 m.bci_pushtx = function(tx,cb) { 
@@ -408,6 +408,11 @@ m.bci_pushtx = function(tx,cb) {
         }
         catch(e) { cb(e) }
     }));
+}
+
+m.electrum_pushtx = function(tx,cb) {
+   console.log(tx);
+   call("electrum",["sendrawtransaction",tx],null,cb); 
 }
 
 m.get_enough_utxo_from_history = function(h,amount,cb) {
@@ -551,8 +556,7 @@ m.apply_multisignatures_at_index = function(tx,script,index,sigobj,cb) {
         if (sigs.length < k) {
             return cb(null,tx);
         }
-        var zeroes = [].concat(_.range(sigs.length,n).map(function() { return 'zero' }));
-        var script2 = [].concat.apply(zeroes,sigs.map(function(sig) { return ['[',sig,']']; }))
+        var script2 = [].concat.apply(['zero'],sigs.map(function(sig) { return ['[',sig,']']; }))
             .concat(['[',script,']']);
         m.rawscript(script2,eh(cb,function(r) {
             m.set_input(tx,index,r,cb);
