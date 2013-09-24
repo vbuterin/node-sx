@@ -73,7 +73,18 @@ m.jsonfy = function(txt) {
 m.noop = function(){};
 
 m.getter = function(p) { return function(x) { return x[p] } }
-m.setter = function(o,p) { return function(x) { o[p] = x; return x; } }
+
+m.cbgetter = function(p,cb) { 
+    return eh(cb,function(x) { cb(null,x[p]) }); 
+}
+
+m.setter = function(o,p,cb) { 
+    return function(x) { o[p] = x; if (cb) cb(); return x; } 
+}
+
+m.cbsetter = function(o,p,cb) { 
+    return m.eh(cb,function(x) { o[p] = x; cb(null,x); }); 
+}
 m.add = function() {
     return Array.prototype.reduce.call(arguments,function(x,y) { return x+y },0)
 }
@@ -501,12 +512,12 @@ m.make_sending_transaction = function(utxo, to, value, change, cb) {
 // output to send excess funds to
 m.send_to_outputs = function(history,outputs,excessIndex,cb) {
     var fee_multiplier = 1;
-    sx.cbuntil(function(cb2) {
+    m.cbuntil(function(cb2) {
         var fee = fee_multiplier * 10000 + outputs.length * 10000;
-        sx.get_enough_utxo_from_history(h,fee,eh(cb3,function(utxo) {
+        m.get_enough_utxo_from_history(h,fee,eh(cb3,function(utxo) {
             var available = utxo.reduce(function(t,o) { return t+o.value },0);
             outputs[0].value = available - fee_multiplier * 10000 - (outputs.length-1) * 10000
-            sx.mktx(utxo,outputs,eh(cb2,function(tx) {
+            m.mktx(utxo,outputs,eh(cb2,function(tx) {
                 if (Math.ceil(tx.length / 2048) > fee_multiplier) {
                     console.log(fee_multiplier);
                     fee_multiplier = Math.ceil(tx.length / 2048);
@@ -520,7 +531,7 @@ m.send_to_outputs = function(history,outputs,excessIndex,cb) {
         var out_value = o.outputs.map(m.getter('value')).reduce(m.add,0);
         var outs = outputs.map(_.clone);
         outs[excessIndex].value += in_value - out_value;
-        sx.mktx(o.utxo,outs,eh(cb,function(tx) {
+        m.mktx(o.utxo,outs,eh(cb,function(tx) {
             return { tx: tx, utxo: o.utxo } 
         }));
     }));
