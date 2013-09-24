@@ -31,7 +31,7 @@ var eh = m.eh = function(fail, success) {
             if (fail) { fail(err); }
         }
         else {
-            success(res);
+            success.apply(this,Array.prototype.slice.call(arguments,1));
         }
     };
 };
@@ -72,6 +72,12 @@ m.jsonfy = function(txt) {
 
 m.noop = function(){};
 
+m.getter = function(p) { return function(x) { return x[p] } }
+m.setter = function(o,p) { return function(x) { o[p] = x; return x; } }
+m.add = function() {
+    return Array.prototype.reduce.call(arguments,function(x,y) { return x+y },0)
+}
+
 m.cbuntil = function(f,cb) {
     f(eh(cb,function(res) {
         if (!res) { m.cbuntil(f,cb) }
@@ -111,6 +117,27 @@ m.foldr = function(array,init,f,cb) {
         f(o,array[i],eh(cb,function(out) { inner(out,i+1); }));
     };
     inner(init,0);
+}
+
+m.resjson = function(res,code,debug) {
+    if (!code) code = 404;
+    return function(err,response) {
+        if (debug) console.log(err || response);
+        return err ? res.json(err,code) : res.json(response);
+    }
+}
+
+m.smartParse = function(x) {
+    if (typeof x == "string" && x[0] == '"' && x[x.length-1] == '"') {
+        return JSON.parse(x);
+    }
+    else return x;
+}
+
+m.txouniq = function(arr) { return _.uniq(arr,false,function(x) { return x.output; }); }
+m.txodiff = function(arr1,arr2) {
+    var del_outputs = arr2.map(function(x) { return x.output });
+    return arr1.filter(function(x) { return del_outputs.indexOf(x.output) == -1 });
 }
 
 m.is_base58 = function(data) {
@@ -228,8 +255,13 @@ m.fetch_transaction = _.partial(cmdcall,'fetch-transaction',null);
 m.blke_fetch_transaction = _.partial(cmdcall,'blke-fetch-transaction',null);
 m.fetch_last_height = _.partial(cmdcall,'fetch-last-height',null,null);
 m.bci_fetch_last_height = _.partial(cmdcall,'bci-fetch-last-height',null,null);
-m.bci_transaction_exists = function(hash,cb) {
-    cmdcall('bci-transaction-exists',[hash],null,cb);
+m.brainwallet = function(user,pass,algo,cb) {
+    var args = [user]
+    if (pass) args.push(pass)
+    if (algo) args = args.concat(['--algo',algo])
+    cmdcall('brainwallet',args,null,eh(cb,function(priv) {
+        m.gen_addr_data(priv,cb);
+    }));
 }
 
 m.get_history = function(blkfetch,histfetch,addrs,cb) {
@@ -463,6 +495,37 @@ m.make_sending_transaction = function(utxo, to, value, change, cb) {
     }
     m.mktx(utxo,outputs,cb);
 }
+
+// Fix a set of outputs, and make a transaction to send to it 
+// picking inputs from a history. excessIndex specified which
+// output to send excess funds to
+m.send_to_outputs = function(history,outputs,excessIndex,cb) {
+    var fee_multiplier = 1;
+    sx.cbuntil(function(cb2) {
+        var fee = fee_multiplier * 10000 + outputs.length * 10000;
+        sx.get_enough_utxo_from_history(h,fee,eh(cb3,function(utxo) {
+            var available = utxo.reduce(function(t,o) { return t+o.value },0);
+            outputs[0].value = available - fee_multiplier * 10000 - (outputs.length-1) * 10000
+            sx.mktx(utxo,outputs,eh(cb2,function(tx) {
+                if (Math.ceil(tx.length / 2048) > fee_multiplier) {
+                    console.log(fee_multiplier);
+                    fee_multiplier = Math.ceil(tx.length / 2048);
+                    return cb2(null,false);
+                }
+                return cb2(null,{ tx: tx, utxo: utxo });
+            }));
+        }));
+    },eh(cb2,function(o) {
+        var in_value = o.utxo.map(m.getter('value')).reduce(m.add,0);
+        var out_value = o.outputs.map(m.getter('value')).reduce(m.add,0);
+        var outs = outputs.map(_.clone);
+        outs[excessIndex].value += in_value - out_value;
+        sx.mktx(o.utxo,outs,eh(cb,function(tx) {
+            return { tx: tx, utxo: o.utxo } 
+        }));
+    }));
+}
+
 
 m.txhash = function(tx,cb) {
     m.showtx(tx,eh(cb,function(shown) { cb(null,shown.hash); }));

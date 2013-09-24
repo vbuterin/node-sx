@@ -41,7 +41,7 @@ m.mketo = function(tx,scriptmap,utxo,cb) {
                 }
                 else {
                     // If not found, look in the blockchain
-                    sx.fetch_transaction(inp.prev.substring(0,64),eh(cb3,function(tx) {
+                    sx.blke_fetch_transaction(inp.prev.substring(0,64),eh(cb3,function(tx) {
                         if (!tx) {
                             return cb3("Transaction input "+i+" not found in blockchain or txpool") 
                         }
@@ -62,14 +62,16 @@ m.mketo = function(tx,scriptmap,utxo,cb) {
                 if (shown.inputs[i].script) {
                     var scr = shown.inputs[i].script;
                     if (scr[scr.length-1] == 'checksig') {
-                        return cb3(null,scr.filter(function(x) { return x.length >= 66 })[0]);
+                        return cb3(null,scr.filter(function(x) {
+                            return x[0] == '0' && (x.length == 66 || x.length == 130)
+                        })[0]);
                     }
                     if (scr[scr.length-1] == 'checkmultisig') {
                         return cb3(null,scr[scr.length-2]);
                     }
                 }
                 // Grab script from blockchain
-                sx.addr_to_pubkey(adddress,eh(cb2,function(scr) {
+                sx.addr_to_pubkey(adddress,eh(cb3,function(scr) {
                     scriptmap[address] = scr;
                     cb3(null,scr);
                 }));
