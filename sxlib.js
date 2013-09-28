@@ -85,8 +85,10 @@ m.setter = function(o,p,cb) {
 m.cbsetter = function(o,p,cb) { 
     return m.eh(cb,function(x) { o[p] = x; cb(null,x); }); 
 }
+m.plus = function(x,y) { return x+y }
+
 m.add = function() {
-    return Array.prototype.reduce.call(arguments,function(x,y) { return x+y },0)
+    return Array.prototype.reduce.call(arguments,m.plus,0);
 }
 
 m.cbuntil = function(f,cb) {
@@ -263,7 +265,9 @@ m.qrcode = function(data,cb) {
 
 m.balance = _.partial(cmdcall,'balance',null);
 m.fetch_transaction = _.partial(cmdcall,'fetch-transaction',null);
-m.blke_fetch_transaction = _.partial(cmdcall,'blke-fetch-transaction',null);
+m.blke_fetch_transaction = function(tx,cb) {
+    cmdcall('blke-fetch-transaction',[tx],null,cb)
+}
 m.fetch_last_height = _.partial(cmdcall,'fetch-last-height',null,null);
 m.bci_fetch_last_height = _.partial(cmdcall,'bci-fetch-last-height',null,null);
 m.brainwallet = function(user,pass,algo,cb) {
@@ -341,7 +345,8 @@ m.showtx = function(tx,cb) {
         try {
             var ans = {
                 inputs: [],
-                outputs: []
+                outputs: [],
+                hex: tx
             };
             m.jsonfy(shown).map(function(o) {
                 if (o.Input != undefined) {
@@ -475,7 +480,7 @@ m.get_enough_utxo_from_history = function(h,amount,cb) {
 // Gets UTXO set paying value _value_ from address set _[from]_
 m.get_utxo = function(from, value, cb) {
     if (typeof from == "string") from = [from];
-    m.history(from,eh(cb,function(h) {
+    m.bci_history(from,eh(cb,function(h) {
         m.get_enough_utxo_from_history(h,value,cb);
     }));
 }
@@ -511,12 +516,11 @@ m.make_sending_transaction = function(utxo, to, value, change, cb) {
 // picking inputs from a history. excessIndex specified which
 // output to send excess funds to
 m.send_to_outputs = function(history,outputs,excessIndex,cb) {
-    var fee_multiplier = 1;
+    var fee_multiplier = 1, feel
     m.cbuntil(function(cb2) {
-        var fee = fee_multiplier * 10000 + outputs.length * 10000;
-        m.get_enough_utxo_from_history(h,fee,eh(cb3,function(utxo) {
-            var available = utxo.reduce(function(t,o) { return t+o.value },0);
-            outputs[0].value = available - fee_multiplier * 10000 - (outputs.length-1) * 10000
+        fee = fee_multiplier * 10000;
+        m.get_enough_utxo_from_history(history,fee,eh(cb2,function(utxo) {
+            var available = utxo.map(m.getter('value')).reduce(m.plus,0);
             m.mktx(utxo,outputs,eh(cb2,function(tx) {
                 if (Math.ceil(tx.length / 2048) > fee_multiplier) {
                     console.log(fee_multiplier);
@@ -526,13 +530,13 @@ m.send_to_outputs = function(history,outputs,excessIndex,cb) {
                 return cb2(null,{ tx: tx, utxo: utxo });
             }));
         }));
-    },eh(cb2,function(o) {
-        var in_value = o.utxo.map(m.getter('value')).reduce(m.add,0);
-        var out_value = o.outputs.map(m.getter('value')).reduce(m.add,0);
+    },eh(cb,function(o) {
+        var in_value = o.utxo.map(m.getter('value')).reduce(m.plus,0);
+        var out_value = outputs.map(m.getter('value')).reduce(m.plus,0);
         var outs = outputs.map(_.clone);
-        outs[excessIndex].value += in_value - out_value;
+        outs[excessIndex].value += in_value - out_value - fee;
         m.mktx(o.utxo,outs,eh(cb,function(tx) {
-            return { tx: tx, utxo: o.utxo } 
+            return cb(null,{ tx: tx, utxo: o.utxo })
         }));
     }));
 }
