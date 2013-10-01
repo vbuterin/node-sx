@@ -197,7 +197,8 @@ var call = function(cmd,args,inp,cb) {
         error = "";
     p.stdout.on('data',function(d) { data += d; });
     p.stderr.on('data',function(d) { error += d; });
-    var argz = arguments
+    var argz = arguments;
+    cb = cb || m.noop;
     p.on('exit',function(exitcode) {
         if (exitcode == 0) { cb(null,strip(data)); }
         else { console.log(strip(error)); cb(strip(error)); }
@@ -474,7 +475,7 @@ m.get_enough_utxo_from_history = function(h,amount,cb) {
         totalval += utxo[i].value;
         if (totalval >= amount) { return cb(null,utxo.slice(0,i+1)); }
     }
-    return cb("Not enough money. Have: "+totalval+", needed: "+amount);
+    return cb("Not enough funds to construct transaction outputs. Have: "+totalval+" satoshis, needed: "+amount);
 }
 
 // Gets UTXO set paying value _value_ from address set _[from]_
@@ -516,10 +517,12 @@ m.make_sending_transaction = function(utxo, to, value, change, cb) {
 // picking inputs from a history. excessIndex specified which
 // output to send excess funds to
 m.send_to_outputs = function(history,outputs,excessIndex,cb) {
-    var fee_multiplier = 1, feel
+    var fee_multiplier = 1,
+        fee,
+        out_value = outputs.map(m.getter('value')).reduce(m.plus,0);
     m.cbuntil(function(cb2) {
         fee = fee_multiplier * 10000;
-        m.get_enough_utxo_from_history(history,fee,eh(cb2,function(utxo) {
+        m.get_enough_utxo_from_history(history,out_value + fee,eh(cb2,function(utxo) {
             var available = utxo.map(m.getter('value')).reduce(m.plus,0);
             m.mktx(utxo,outputs,eh(cb2,function(tx) {
                 if (Math.ceil(tx.length / 2048) > fee_multiplier) {
@@ -532,7 +535,6 @@ m.send_to_outputs = function(history,outputs,excessIndex,cb) {
         }));
     },eh(cb,function(o) {
         var in_value = o.utxo.map(m.getter('value')).reduce(m.plus,0);
-        var out_value = outputs.map(m.getter('value')).reduce(m.plus,0);
         var outs = outputs.map(_.clone);
         outs[excessIndex].value += in_value - out_value - fee;
         m.mktx(o.utxo,outs,eh(cb,function(tx) {
@@ -554,26 +556,21 @@ m.gen_addr_data = function(pk,cb) {
     }
     if (typeof pk == "object") { return cb(null,pk); }
 
-    var addrdata = { priv: pk }
+    var d = { priv: pk }
 
-    var adpusher = function(key,cb2) { 
-        return eh(cb2,function(val) {
-            addrdata[key] = val; cb2();
-        }); 
-    }
     async.waterfall([
-        function(cb2) { m.pubkey(addrdata.priv,adpusher('pub',cb2)) },
-        function(cb2) { m.addr(addrdata.priv,adpusher('address',cb2)) },
-        function(cb2) { m.decode_addr(addrdata.address,adpusher('hash160',cb2)) },
-        function(cb2) {
-            if (addrdata.address[0] == '1') {
-                var script = ['dup','hash160','[',addrdata.hash160,']','equalverify','checksig'];
-                addrdata.script = script;
-                m.rawscript(script, adpusher('raw',cb2));
+        function(cb2) { m.pubkey(d.priv,m.cbsetter(d,'pub',cb2)) },
+        function(_,cb2) { m.addr(d.priv,m.cbsetter(d,'address',cb2)) },
+        function(_,cb2) { m.decode_addr(d.address,m.cbsetter(d,'hash160',cb2)) },
+        function(_,cb2) {
+            if (d.address[0] == '1') {
+                var script = ['dup','hash160','[',d.hash160,']','equalverify','checksig'];
+                d.script = script;
+                m.rawscript(script, m.cbsetter(d,'raw',cb2));
             }
             else cb2();
         },
-    ],eh(cb,function() { cb(null,addrdata); }));
+    ],eh(cb,function() { cb(null,d); }));
 }
 
 // Generates a multisig address and its associated script
