@@ -31,7 +31,7 @@ m.mketo = function(tx,scriptmap,utxo,cb) {
 
     sx.showtx(tx,eh(cb,function(shown) {
         eto.sigs = Array(shown.inputs.length);
-        sx.cbmap_seq(_.range(shown.inputs.length),function(i,cb2) {
+        async.mapSeries(_.range(shown.inputs.length),function(i,cb2) {
             var inp = shown.inputs[i];
             async.waterfall([function(cb3) {
                 // Look through UTXO to find the address matching each tx input
@@ -103,7 +103,7 @@ m.extract_signatures = function(eto,cb) {
 
 m.process_multisignatures = function(eto,cb) {
 // Do we have enough signatures at any particular index?
-    sx.foldr(_.range(eto.inputscripts.length),eto,function(eto,i,cb2) {
+    async.foldl(_.range(eto.inputscripts.length),eto,function(eto,i,cb2) {
         if (sx.is_pubkey(eto.inputscripts[i]) || eto.sigs[i] === true) {
             cb2(null,eto);
         }
@@ -153,7 +153,7 @@ m.signeto = function(eto,pk,cb) {
 
     sx.gen_addr_data(pk,eh(cb,function(addrdata) {
         sx.showtx(eto.tx,eh(cb,function(shown) {
-            sx.foldr(_.range(shown.inputs.length),eto,function(eto,i,cb2) {
+            async.foldl(_.range(shown.inputs.length),eto,function(eto,i,cb2) {
                 var inp = shown.inputs[i],
                     ispub = sx.is_pubkey(eto.inputscripts[i]);
                 var mkaddr = ispub ? sx.addr : sx.scripthash;
@@ -200,7 +200,7 @@ m.apply_sig_to_eto = function(eto,sig,cb) {
             var pubkeys = shown.filter(function(x) { 
                 return x.length == 66 || x.length == 130; 
             });
-            sx.foldr(_.range(pubkeys.length),eto,function(eto,j,cb2) { 
+            async.foldl(_.range(pubkeys.length),eto,function(eto,j,cb2) { 
                 sx.validate_input(eto.tx,i,script,sig,pubkeys[j],eh(cb,function(v) { 
                     if (v) {
                         if (eto.sigs[i] === true || (eto.sigs[i] && eto.sigs[i][j])) {
@@ -221,7 +221,7 @@ m.apply_sig_to_eto = function(eto,sig,cb) {
 
     sx.showtx(eto.tx,eh(cb,function(shown) {
         console.log(eto);
-        sx.foldr(_.range(shown.inputs.length),eto,function(eto,i,cb2) {
+        async.foldl(_.range(shown.inputs.length),eto,function(eto,i,cb2) {
             console.log(eto,i);
             (sx.is_pubkey(eto.inputscripts[i]) ? process_pubkey : process_scripthash)(i,cb2);
         },eh(cb,function(eto) {

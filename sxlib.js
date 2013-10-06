@@ -98,40 +98,6 @@ m.cbuntil = function(f,cb) {
     }));
 }
 
-m.cbmap = function(array,f,cb) {
-    var cbs = array.length;
-    var out = Array(array.length);
-    var done = _.once(cb);
-    if (array.length === 0) { return cb(null,[]); }
-    for (var i = 0; i < array.length; i++) {
-        f(array[i],function(ii) { return eh(done,function(v) {
-            out[ii] = v;
-            cbs--;
-            if (cbs===0) { return done(null,out); }
-        }); }(i));
-    };
-}
-
-m.cbmap_seq = function(array,f,cb) {
-    var out = Array(array.length);
-    var inner = function(i) {
-        if (i >= array.length) { return cb(null,out); }
-        f(array[i],function(ii) { return eh(cb,function(v) {
-            out[ii] = v;
-            inner(i+1);
-        }); }(i));
-    };
-    inner(0);
-}
-
-m.foldr = function(array,init,f,cb) {
-    var inner = function(o,i) {
-        if (i == array.length) { return cb(null,o); }
-        f(o,array[i],eh(cb,function(out) { inner(out,i+1); }));
-    };
-    inner(init,0);
-}
-
 m.resjson = function(res,code,debug) {
     if (!code) code = 404;
     return function(err,response) {
@@ -466,10 +432,16 @@ m.electrum_pushtx = function(tx,cb) {
 
 m.get_enough_utxo_from_history = function(h,amount,cb) {
     var utxo = h.filter(function(x) { return !x.spend });
-    var valuecompare = function(a,b) { return a.value > b.value; }
-    var high = utxo.filter(function(o) { return o.value >= amount; }).sort(valuecompare);
-    if (high.length > 0) { return cb(null,[high[0]]); }
-    utxo.sort(valuecompare);
+    var priority = function(o) {
+        // If one output can pay for the entire transaction, prioritize it
+        if (o.value >= amount) return [0,o.value];
+        // Otherwise, try to use as few outputs as possible (ie. the largest
+        // outputs) to make the transaction. This also fights against
+        // "satoshi pollution" attacks
+        else return [1,-o.value]
+    }
+    var valuecompare = function(a,b) { return priority(a) > priority(b) }
+    utxo = utxo.sort(valuecompare);
     var totalval = 0;
     for (var i = 0; i < utxo.length; i++) {
         totalval += utxo[i].value;
@@ -523,9 +495,8 @@ m.send_to_outputs = function(history,outputs,excessIndex,cb) {
     m.cbuntil(function(cb2) {
         fee = fee_multiplier * 10000;
         m.get_enough_utxo_from_history(history,out_value + fee,eh(cb2,function(utxo) {
-            var available = utxo.map(m.getter('value')).reduce(m.plus,0);
             m.mktx(utxo,outputs,eh(cb2,function(tx) {
-                if (Math.ceil(tx.length / 2048) > fee_multiplier) {
+                if (Math.ceil((tx.length + 2) / 2048) > fee_multiplier) {
                     console.log(fee_multiplier);
                     fee_multiplier = Math.ceil(tx.length / 2048);
                     return cb2(null,false);
@@ -552,7 +523,7 @@ m.txhash = function(tx,cb) {
 // addrdata: { priv: _, pub: _, address: _, hash160: _, raw: _ }
 m.gen_addr_data = function(pk,cb) {
     if (_.isArray(pk)) { //Handles arrays of private keys
-        return m.cbmap(pk,m.gen_addr_data,cb);
+        return async.map(pk,m.gen_addr_data,cb);
     }
     if (typeof pk == "object") { return cb(null,pk); }
 
@@ -575,7 +546,7 @@ m.gen_addr_data = function(pk,cb) {
 
 // Generates a multisig address and its associated script
 m.gen_multisig_addr_data = function(pubs,k,cb) {
-    m.cbmap(pubs,function(addrdata,cb2) {
+    async.map(pubs,function(addrdata,cb2) {
         if (typeof addrdata == "object") { 
             return cb2(null,addrdata.pub);
         }
@@ -649,7 +620,7 @@ m.sign_tx_inputs = function(tx, privs, utxo, cb) {
         m.showtx(tx,eh(cb,function(shown) {
             var utxomap = {};
             utxo.map(function(u) { utxomap[u.output] = u; });
-            m.foldr(_.range(shown.inputs.length),tx,function(tx,i,cb2) {
+            async.foldl(_.range(shown.inputs.length),tx,function(tx,i,cb2) {
                 var good_addrdata = addrdata.filter(function(x) {
                     return utxomap[shown.inputs[i].prev] &&
                            x.address == utxomap[shown.inputs[i].prev].address;
