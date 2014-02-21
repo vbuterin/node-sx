@@ -6,8 +6,8 @@ var app = express();
 app.configure(function() {                                                                
      app.set('views',__dirname + '/views');                                               
      app.set('view engine', 'jade'); app.set('view options', { layout: false });          
-     //app.use(express.bodyParser());                                                       
-     //app.use(express.cookieParser());                                                     
+     app.use(express.bodyParser());                                                       
+     app.use(express.methodOverride());                                                     
      //app.use(allowCrossDomain);
      app.use(app.router);                                                                 
      app.use(express.static(__dirname + '/public'));                                      
@@ -21,9 +21,11 @@ var allowCrossDomain = function(req, res, next) {
     next();
 }
 
-app.post('/pushtx',function(req,res,next) {
+app.post('/pushtx',function(req,res) {
     res.header('Access-Control-Allow-Origin', "*");
-    sx.bci_pushtx(req.data,sx.eh(function(r) { res.json(r,400); }, function(r) { res.json(r) }))
+    var tx = '';
+    for (var p in req.body) tx = p;
+    sx.bci_pushtx(tx,sx.eh(function(r) { res.json(r,400); }, function(r) { res.json(r) }))
 });
 
 app.get('/history/:address',function(req,res,next) {
