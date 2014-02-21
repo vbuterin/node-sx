@@ -7,6 +7,7 @@
         "async": "*",
         "long-stack-traces": "*",
         "crypto": "*",
+        "mongodb": "*",
         "express": "3.1.0"
     },
     "main": "main.js",
